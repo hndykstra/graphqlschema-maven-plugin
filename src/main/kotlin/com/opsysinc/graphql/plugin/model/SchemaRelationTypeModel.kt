@@ -54,10 +54,10 @@ class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo,
         val workingFromType = fromType
         if (workingToType == null) throw ClassModelException(classInfo.name().toString(), "Relation entity does not have @EndNode")
 
-        toModel = withModel.getTypeModel(workingToType)
+        toModel = model.getTypeModel(workingToType)
         if (toModel == null) throw ClassModelException(classInfo.name().toString(), "Relation entity end node is not a valid entity")
 
-        fromModel = if (workingFromType == null) withModel.findFromTypeModel(this) else withModel.getTypeModel(workingFromType)
+        fromModel = if (workingFromType == null) model.findFromTypeModel(this) else model.getTypeModel(workingFromType)
         if (fromModel == null) throw ClassModelException(classInfo.name().toString(), "Relation entity could not resolve start node. Missing @StartNode and no related entity was found.")
     }
 
