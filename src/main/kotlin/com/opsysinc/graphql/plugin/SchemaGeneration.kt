@@ -204,7 +204,7 @@ class SchemaGeneration(
                                 if (modelEnum == null) {
                                     // TODO: maybe there should be a strict mode for this
                                     modelEnum = createEnumFromType(enumType.asClassType())
-                                    logger.warn("Enum ${enumType.name()} added to model without @SchemaEnum annotation")
+                                    logger.info("Enum ${enumType.name()} added to model without @SchemaEnum annotation")
                                     schemaModel.addEnumType(enumType.name(), modelEnum)
                                 }
                                 val enumModel = createSimpleAttributeForGetter(m, modelEnum)

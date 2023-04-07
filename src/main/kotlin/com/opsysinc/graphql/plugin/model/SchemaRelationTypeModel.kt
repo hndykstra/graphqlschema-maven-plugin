@@ -1,5 +1,6 @@
 package com.opsysinc.graphql.plugin.model
 
+import com.opsysinc.graphql.plAugin.AttributeModelException
 import com.opsysinc.graphql.plAugin.ClassModelException
 import org.jboss.jandex.ClassInfo
 import org.jboss.jandex.Type
@@ -16,7 +17,8 @@ class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo,
     init {
         // read relationship info from the NodeEntity annotation
         val label = nodeEntity.value("label").asStringArray()
-        if (label.size != 1) throw IllegalArgumentException("Relation entity requires exactly one label")
+        if (label.size != 1) throw ClassModelException(classInfo.name().toString(),
+            "Relation entity requires exactly one label")
         relationName = label[0]
     }
 
@@ -45,35 +47,37 @@ class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo,
     }
 
     override fun addRelationshipAttribute(attr: RelationshipAttributeModel): Boolean {
-        throw IllegalArgumentException("${classInfo.name()}: Unable to add relationship attribute ${attr.schemaName} on relationship.")
+        throw AttributeModelException(attr.schemaName, classInfo.name().toString(), "Unable to add relationship attribute on relationship entity.")
     }
 
     override fun resolve(model: SchemaModel) {
         // if fromType and toType are set, we need the actual SchemaTypeModel for them
         val workingToType = toType
         val workingFromType = fromType
-        if (workingToType == null) throw ClassModelException(classInfo.name().toString(), "Relation entity does not have @EndNode")
 
+        if (workingToType == null) throw ClassModelException(classInfo.name().toString(), "Relation entity does not have @EndNode")
         toModel = model.getTypeModel(workingToType)
         if (toModel == null) throw ClassModelException(classInfo.name().toString(), "Relation entity end node is not a valid entity")
 
-        fromModel = if (workingFromType == null) model.findFromTypeModel(this) else model.getTypeModel(workingFromType)
-        if (fromModel == null) throw ClassModelException(classInfo.name().toString(), "Relation entity could not resolve start node. Missing @StartNode and no related entity was found.")
+        fromModel = workingFromType?.let { model.getTypeModel(it) } ?: model.findFromTypeModel(this)
+        if (fromModel == null) throw ClassModelException(classInfo.name().toString(), "Relation entity not referenced from any source node.")
     }
 
     override fun generateTypeStatement(): String {
         val base = "type $schemaName"
-        val workingFromName = if (fromName == null) "source" else fromName!!
+        val workingFromName = if (fromName == null) "sourceNode" else fromName!!
         val workingToName = toName!!
-        return "$base @relation(name: \"${relationName}\", from: \"$workingFromName}\", to: \"${workingToName}\") {"
+        val fromClause = ", from: \"$workingFromName\""
+        val toClause = ", to: \"$workingToName\""
+        return "$base @relation(name: \"${relationName}\"$fromClause$toClause) {"
     }
 
     override fun generateRelations(): String {
         // no actual relations except the from and to
-        val workingFromName = if (fromName == null) "source" else fromName!!
+        val workingFromName = if (fromName == null) "sourceNode" else fromName!!
         val workingToName = toName!!
-        val fromAttr = "$INDENT$workingFromName ${fromModel?.schemaName}!"
-        val toAttr = "$INDENT$workingToName ${toModel?.schemaName}!"
-        return fromAttr + "\n" + toAttr
+        val fromAttr = "$INDENT$workingFromName : ${fromModel?.schemaName}!\n"
+        val toAttr = "$INDENT$workingToName : ${toModel?.schemaName}!"
+        return fromAttr + toAttr
     }
 }

@@ -102,12 +102,12 @@ class GenerateSchemaMojo : AbstractMojo() {
                 emptyList()
             }
 
-            if (pluginErrors.isNotEmpty()) {
+            if (pluginErrors.isEmpty()) {
                 log.info("Copying to $buildDir")
                 copyToTarget(generateResourceDir, outFile, Path(buildDir))
                 fragments.forEach { copyToTarget(generateResourceDir, it, Path(buildDir)) }
             } else {
-                throw MojoFailureException("Schema ")
+                throw MojoFailureException("Schema generation failed due to reported errors")
             }
         } catch (mojoErr: MojoFailureException) {
             throw mojoErr

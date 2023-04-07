@@ -27,7 +27,7 @@ class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
         val type = if (collection) "[$schemaTypeName!]" else schemaTypeName
         val base = if (required) "$schemaName : $type!" else "$schemaName : $type"
         // @relation(name: "USES_DOCUMENT_CLASS", direction: OUT)
-        val relation = " @relation(name: \"$relationshipName\", direction: \"${direction.name}\")"
+        val relation = " @relation(name: \"$relationshipName\", direction: ${direction.name})"
         return base + relation
     }
 }
