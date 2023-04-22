@@ -9,9 +9,9 @@ import com.opsysinc.graphql.plugin.model.*
 import org.apache.maven.plugin.MojoFailureException
 import org.jboss.jandex.*
 import org.jboss.jandex.AnnotationTarget
-import org.neo4j.graphql.toLowerCase
 import org.slf4j.LoggerFactory
 import java.lang.reflect.Modifier
+import java.util.*
 import kotlin.reflect.full.declaredFunctions
 import kotlin.reflect.full.declaredMemberProperties
 
@@ -52,8 +52,8 @@ class SchemaGeneration(
      */
     private fun scanTypes() {
         index.getAnnotations(NodeEntity::class.java).forEach { annotation ->
+            val cls = annotation.target().asClass()!!
             try {
-                val cls = annotation.target().asClass()!!
                 if (cls.isInterface) throw ClassModelException(cls.name().toString(), "@NodeEntity is only supported on classes")
                 val entityType = annotation.value("type")?.asEnum()?.let { NodeEntityType.valueOf(it) } ?: NodeEntityType.NODE
                 if (entityType == NodeEntityType.NODE) {
@@ -89,6 +89,8 @@ class SchemaGeneration(
                 }
             } catch (e: ModelException) {
                 errors.add(e)
+            } catch (e: RuntimeException) {
+                throw IllegalArgumentException("Problem with annotations on ${cls.name()}", e)
             }
         }
     }
@@ -99,7 +101,8 @@ class SchemaGeneration(
                 val cls = annotation.target().asClass()!!
                 if (!cls.isInterface) throw ClassModelException(cls.name().toString(),
                     "@SchemaInterface is only supported on interfaces")
-                val workingName = annotation.value("schemaName")?.asString() ?: cls.simpleName()
+                val annotationName = annotation.value("schemaName")?.asString()
+                val workingName = if (annotationName != null && annotationName.trim().isNotEmpty()) annotationName else cls.simpleName()
                 val model = InterfaceTypeModel(cls, workingName)
                 scanInterfaceGetters(cls, model)
                 schemaModel.addInterface(model)
@@ -113,6 +116,7 @@ class SchemaGeneration(
     private fun scanEnums() {
         // this will only find enums that have @SchemaEnum, which isn't necessarily all of them
         // more of pre-warming the model than necessity
+        // this ensures that enum types can have a schemaName assigned in the annotation
         index.getAnnotations(SchemaEnum::class.java).forEach { annotation ->
             try {
                 // this throws or returns non-null
@@ -434,9 +438,9 @@ class SchemaGeneration(
     }
 
     private fun createEnumFromClass(annotation: AnnotationInstance, enumClass: ClassInfo): EnumType {
-        // TODO: @SchemaEnum(name = "")
-        val anno = enumClass.annotation(SchemaEnum::class.java)
-        val name = anno?.value("name")?.asString() ?: enumClass.simpleName()
+        val annotationName = annotation.value("schemaName")?.asString()
+        val name = if (annotationName != null && annotationName.trim().isNotEmpty()) annotationName
+            else enumClass.simpleName()
 
         try {
             val actualClass = classFromName(enumClass.name(), true)
@@ -624,7 +628,7 @@ class SchemaGeneration(
     }
 
     private fun decapitalize(name: String): String {
-        return name.substring(0 until 1).toLowerCase() + name.substring(1)
+        return name.substring(0 until 1).lowercase(Locale.getDefault()) + name.substring(1)
     }
 
     companion object {

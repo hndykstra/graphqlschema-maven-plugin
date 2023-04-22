@@ -68,12 +68,12 @@ class GenerateSchemaMojo : AbstractMojo() {
         val generator = SchemaGeneration(jandex, model, setupProjectClassloader(workingProject))
         val pluginErrors = mutableListOf<ModelException>()
         // run the generation
-        log.info("Building GraphQL schema model")
-        pluginErrors.addAll(generator.scan())
 
         // validate the model
-        log.info("Validating model")
         try {
+            log.info("Building GraphQL schema model")
+            pluginErrors.addAll(generator.scan())
+            log.info("Validating model")
             pluginErrors.addAll(model.validate())
 
             // Q: Should we fail the mojo if there are errors?

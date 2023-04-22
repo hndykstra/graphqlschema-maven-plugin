@@ -1,5 +1,6 @@
 package com.opsysinc.graphql.plugin.model
 
+import com.opsysinc.graphql.plAugin.AttributeModelException
 import org.jboss.jandex.Type
 
 /**
@@ -19,7 +20,8 @@ class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
 
     fun resolve(model: SchemaModel, owningType: SchemaTypeModel) {
         val schemaTypeModel = model.getTypeModel(schemaType)
-            ?: throw IllegalArgumentException("Attribute '$schemaName' of class '${owningType.schemaName}' could not resolve type ${schemaType.name()}")
+            ?: throw AttributeModelException(schemaName, owningType.schemaName,
+                "Could not resolve type ${schemaType.name()}")
         schemaTypeName = schemaTypeModel.schemaName
     }
 

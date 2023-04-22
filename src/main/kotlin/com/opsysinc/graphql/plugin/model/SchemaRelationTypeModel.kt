@@ -16,8 +16,8 @@ class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo,
 
     init {
         // read relationship info from the NodeEntity annotation
-        val label = nodeEntity.value("label").asStringArray()
-        if (label.size != 1) throw ClassModelException(classInfo.name().toString(),
+        val label = nodeEntity.value("label")?.asStringArray()
+        if (label == null || label.size != 1) throw ClassModelException(classInfo.name().toString(),
             "Relation entity requires exactly one label")
         relationName = label[0]
     }
