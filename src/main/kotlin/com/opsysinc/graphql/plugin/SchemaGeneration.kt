@@ -61,9 +61,11 @@ class SchemaGeneration(
                     scanTypeForInterfaces(cls, model)
                     val scanLocation = determineScanLocation(cls, NodeKey::class.java)
                     val errs = if (scanLocation == ScanLocation.METHODS) {
-                        scanTypeGetters(cls, model)
+                        scanTypeGetters(cls, model, false)
+                        scanTypeFields(cls, model, true)
                     } else {
-                        scanTypeFields(cls, model)
+                        scanTypeFields(cls, model, false)
+                        scanTypeGetters(cls, model, true)
                     }
                     if (errs.isEmpty()) {
                         schemaModel.addType(model)
@@ -74,12 +76,16 @@ class SchemaGeneration(
                     val model = SchemaRelationTypeModel(cls)
                     val ifaceErrs = scanTypeForInterfaces(cls, model)
                     errors.addAll(ifaceErrs)
-                    // this uses both getters and fields to identify fields
+                    // this uses both getters and fields to identify schema properties
                     val scanLocation = determineScanLocation(cls, EndNode::class.java)
                     val errs = if (scanLocation == ScanLocation.METHODS) {
-                        scanTypeGetters(cls, model)
+                        // This will prioritize getters but also pick up fields if specifically annotated @NodeAttribute
+                        scanTypeGetters(cls, model, false)
+                        scanTypeFields(cls, model, true)
                     } else {
-                        scanTypeFields(cls, model)
+
+                        scanTypeFields(cls, model, false)
+                        scanTypeGetters(cls, model, true)
                     }
                     if (errs.isEmpty()) {
                         schemaModel.addType(model)
@@ -134,7 +140,7 @@ class SchemaGeneration(
 
     private fun scanInterfaceGetters(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
         val errs = mutableListOf<ModelException>()
-        errs.addAll(scanDeclaredGetters(cls, typeModel))
+        errs.addAll(scanDeclaredGetters(cls, typeModel, false))
         val sup = cls.interfaceNames()
         sup.forEach {
             val supCls = index.getClassByName(it)
@@ -155,14 +161,16 @@ class SchemaGeneration(
      * This is returns as attrName -> Exception
      * If a same-named attribute is successfully added in another part of the scan, suppress the error
      */
-    private fun scanTypeGetters(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
+    private fun scanTypeGetters(cls: ClassInfo,
+                                typeModel: SchemaTypeModel,
+                                requireNodeAttibute: Boolean) : List<ModelException> {
         val errs = mutableListOf<ModelException> ()
-        errs.addAll(scanDeclaredGetters(cls, typeModel))
+        errs.addAll(scanDeclaredGetters(cls, typeModel, requireNodeAttibute))
         val sup = cls.superClassType()
         val supInIndex = index.getClassByName(sup.name())
         if (supInIndex != null) {
             // Q: Should we allow @NodeIgnore on superclasses?
-            errs.addAll(scanTypeGetters(supInIndex, typeModel))
+            errs.addAll(scanTypeGetters(supInIndex, typeModel, requireNodeAttibute))
         }
         return errs
     }
@@ -177,90 +185,101 @@ class SchemaGeneration(
         return emptyList()
     }
 
-    private fun scanDeclaredGetters(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
+    private fun scanDeclaredGetters(cls: ClassInfo,
+                                    typeModel: SchemaTypeModel,
+                                    requireNodeAttribute: Boolean) : List<ModelException> {
         val errs = mutableListOf<ModelException>()
         // only public, non-static methods getXxx() or isXxx() without @NodeIgnore
         cls.methods().asSequence()
             .filter { m -> ((m.flags().toInt()) and (Modifier.STATIC)) == 0 }
             .filter { m -> ((m.flags().toInt()) and (Modifier.PUBLIC)) != 0 }
             .filter { m -> m.parametersCount() == 0 && (m.name().startsWith("get") || m.name().startsWith("is")) }
+            .filter { m -> !requireNodeAttribute || m.hasAnnotation(NodeAttribute::class.java) }
             .forEach { m ->
-                // TODO: simplify this. Maybe move some logic to shorter methods and scan the types, scalars, enums, etc
-                // up front to select the right approach with less nested ifs
-                val startNode = m.annotation(StartNode::class.java)
-                val endNode = m.annotation(EndNode::class.java)
-                val ignoreIt = m.hasAnnotation(NodeIgnore::class.java)
-                if (startNode == null && endNode == null) {
-                    try {
-                        val type = m.returnType()
-                        val scalarType = getSchemaScalar(type)
-                        if (scalarType != null) {
-                            val scalarModel = createSimpleAttributeForGetter(m, scalarType)
-                            if (ignoreIt) {
-                                typeModel.ignoreAttribute(scalarModel.schemaName)
-                            } else {
-                                typeModel.addSimpleAttribute(scalarModel)
-                            }
-                        } else {
-                            val enumType = extractEnumType(type)
-                            if (enumType != null) {
-                                var modelEnum = schemaModel.getEnum(enumType.name())
-                                if (modelEnum == null) {
-                                    // TODO: maybe there should be a strict mode for this
-                                    modelEnum = createEnumFromType(enumType.asClassType())
-                                    logger.info("Enum ${enumType.name()} added to model without @SchemaEnum annotation")
-                                    schemaModel.addEnumType(enumType.name(), modelEnum)
-                                }
-                                val enumModel = createSimpleAttributeForGetter(m, modelEnum)
+                    // TODO: simplify this. Maybe move some logic to shorter methods and scan the types, scalars, enums, etc
+                    // up front to select the right approach with less nested ifs
+                    val startNode = m.annotation(StartNode::class.java)
+                    val endNode = m.annotation(EndNode::class.java)
+                    val ignoreIt = m.hasAnnotation(NodeIgnore::class.java)
+                    if (startNode == null && endNode == null) {
+                        try {
+                            val type = m.returnType()
+                            val scalarType = getSchemaScalar(type)
+                            if (scalarType != null) {
+                                val scalarModel = createSimpleAttributeForGetter(m, scalarType)
                                 if (ignoreIt) {
-                                    typeModel.ignoreAttribute(enumModel.schemaName)
+                                    typeModel.ignoreAttribute(scalarModel.schemaName)
                                 } else {
-                                    typeModel.addSimpleAttribute(enumModel)
+                                    typeModel.addSimpleAttribute(scalarModel)
                                 }
                             } else {
-                                val relModel = createRelationshipAttributeForGetter(m)
-                                if (ignoreIt) {
-                                    schemaModel.ignoreMention(
-                                        relModel.schemaType.name(),
-                                        m.declaringClass(),
-                                        relModel.schemaName
-                                    )
-                                    typeModel.ignoreAttribute(relModel.schemaName)
+                                val enumType = extractEnumType(type)
+                                if (enumType != null) {
+                                    var modelEnum = schemaModel.getEnum(enumType.name())
+                                    if (modelEnum == null) {
+                                        // TODO: maybe there should be a strict mode for this
+                                        modelEnum = createEnumFromType(enumType.asClassType())
+                                        logger.info("Enum ${enumType.name()} added to model without @SchemaEnum annotation")
+                                        schemaModel.addEnumType(enumType.name(), modelEnum)
+                                    }
+                                    val enumModel = createSimpleAttributeForGetter(m, modelEnum)
+                                    if (ignoreIt) {
+                                        typeModel.ignoreAttribute(enumModel.schemaName)
+                                    } else {
+                                        typeModel.addSimpleAttribute(enumModel)
+                                    }
                                 } else {
-                                    schemaModel.addMention(
-                                        relModel.schemaType.name(),
-                                        m.declaringClass(),
-                                        relModel.schemaName
-                                    )
-                                    typeModel.addRelationshipAttribute(relModel)
+                                    val relModel = createRelationshipAttributeForGetter(m)
+                                    if (ignoreIt) {
+                                        schemaModel.ignoreMention(
+                                            relModel.schemaType.name(),
+                                            m.declaringClass(),
+                                            relModel.schemaName
+                                        )
+                                        typeModel.ignoreAttribute(relModel.schemaName)
+                                    } else {
+                                        schemaModel.addMention(
+                                            relModel.schemaType.name(),
+                                            m.declaringClass(),
+                                            relModel.schemaName
+                                        )
+                                        typeModel.addRelationshipAttribute(relModel)
+                                    }
                                 }
                             }
+                        } catch (e: ModelException) {
+                            // throw a new one with better contextual information
+                            if (e !is AttributeModelException) {
+                                val ie = AttributeModelException(m.name(), cls.name().toString(), e.message)
+                                ie.addSuppressed(e)
+                                errs.add(ie)
+                            } else {
+                                errs.add(e)
+                            }
                         }
-                    } catch (e: ModelException) {
-                        // throw a new one with better contextual information
-                        if (e !is AttributeModelException) {
-                            val ie = AttributeModelException(m.name(), cls.name().toString(), e.message)
-                            ie.addSuppressed(e)
-                            errs.add(ie)
+                    } else if (startNode != null) {
+                        if (typeModel is SchemaRelationTypeModel) {
+                            typeModel.setFrom(attrNameFromMethod(m), m.returnType())
                         } else {
-                            errs.add(e)
+                            errs.add(
+                                AttributeModelException(
+                                    m.name(), cls.name().toString(),
+                                    "Encountered @StartNode in non-relation node entity"
+                                )
+                            )
+                        }
+                    } else if (endNode != null) {
+                        if (typeModel is SchemaRelationTypeModel) {
+                            typeModel.setTo(attrNameFromMethod(m), m.returnType())
+                        } else {
+                            errs.add(
+                                AttributeModelException(
+                                    m.name(), cls.name().toString(),
+                                    "Encountered @EndNode in non-relation node entity"
+                                )
+                            )
                         }
                     }
-                } else if (startNode != null) {
-                    if (typeModel is SchemaRelationTypeModel) {
-                        typeModel.setFrom(attrNameFromMethod(m), m.returnType())
-                    } else {
-                        errs.add(AttributeModelException(m.name(), cls.name().toString(),
-                            "Encountered @StartNode in non-relation node entity"))
-                    }
-                } else if (endNode != null) {
-                    if (typeModel is SchemaRelationTypeModel) {
-                        typeModel.setTo(attrNameFromMethod(m), m.returnType())
-                    } else {
-                        errs.add(AttributeModelException(m.name(), cls.name().toString(),
-                            "Encountered @EndNode in non-relation node entity"))
-                    }
-                }
             }
         return errs
     }
@@ -304,23 +323,28 @@ class SchemaGeneration(
         return RelationshipAttributeModel(name, getElementType(type), relationName, direction, required, collection)
     }
 
-    private fun scanTypeFields(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
+    private fun scanTypeFields(cls: ClassInfo,
+                               typeModel: SchemaTypeModel,
+                               requireNodeAttribute: Boolean) : List<ModelException> {
         val errs = mutableListOf<ModelException>()
-        errs.addAll(scanDeclaredFields(cls, typeModel))
+        errs.addAll(scanDeclaredFields(cls, typeModel, requireNodeAttribute))
         val sup = cls.superClassType()
         val supInIndex = index.getClassByName(sup.name())
         if (supInIndex != null) {
-            errs.addAll(scanTypeFields(supInIndex, typeModel))
+            errs.addAll(scanTypeFields(supInIndex, typeModel, requireNodeAttribute))
         }
         return errs
     }
 
-    private fun scanDeclaredFields(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
+    private fun scanDeclaredFields(cls: ClassInfo,
+                                   typeModel: SchemaTypeModel,
+                                   requireNodeAttribute: Boolean) : List<ModelException> {
         val errs = mutableListOf<ModelException>()
         // only non-static fields without @NodeIgnore
         cls.fields().asSequence()
             .filter { field -> ((field.flags().toInt()) and (Modifier.STATIC)) == 0 }
             .filter { field -> !field.hasAnnotation(NodeIgnore::class.java) }
+            .filter { field -> !requireNodeAttribute || field.hasAnnotation(NodeAttribute::class.java) }
             .forEach { field ->
                 try {
                     val startNode = field.annotation(StartNode::class.java)

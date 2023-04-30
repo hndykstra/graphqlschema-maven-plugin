@@ -2,8 +2,12 @@ package com.opsysinc.graphql.plugin
 
 import com.opsysinc.graphql.plAugin.ModelException
 import com.opsysinc.graphql.plugin.model.SchemaModel
+import org.apache.maven.execution.MavenSession
+import org.apache.maven.model.Resource
 import org.apache.maven.plugin.AbstractMojo
+import org.apache.maven.plugin.BuildPluginManager
 import org.apache.maven.plugin.MojoFailureException
+import org.apache.maven.plugins.annotations.Component
 import org.apache.maven.plugins.annotations.LifecyclePhase
 import org.apache.maven.plugins.annotations.Mojo
 import org.apache.maven.plugins.annotations.Parameter
@@ -17,6 +21,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import kotlin.io.path.Path
+import kotlin.io.path.exists
+import org.twdata.maven.mojoexecutor.MojoExecutor.*
 
 @Mojo(name = "graphql-schema",
     defaultPhase = LifecyclePhase.PROCESS_CLASSES,
@@ -24,8 +30,12 @@ import kotlin.io.path.Path
 class GenerateSchemaMojo : AbstractMojo() {
 
     /** Injected as the maven project object. */
-    @Parameter(defaultValue = "\${project}", required = true, readonly = true)
+    @Component
     var project : MavenProject? = null
+    @Component
+    var session : MavenSession? = null
+    @Component
+    var pluginManager : BuildPluginManager? = null
 
     /** From the pom file, or default to {baseDir}/target/classes/META-INF/jandex.idx */
     @Parameter(property = "indexFile")
@@ -86,7 +96,8 @@ class GenerateSchemaMojo : AbstractMojo() {
             }
 
             // export the model
-            val generateResourceDir = Path(outputDirectory ?: "${thisProject.build.directory}/generated-resources/graphql-schema")
+            val generateResourceLocation = outputDirectory ?: "${thisProject.build.directory}/generated-resources/graphql-schema"
+            val generateResourceDir = Path(generateResourceLocation)
             val packageDir = generateResourceDir.resolve(resourcePackage.replace(".", File.separator))
             Files.createDirectories(packageDir)
             val outFile = packageDir.resolve(schemaFile)
@@ -103,9 +114,10 @@ class GenerateSchemaMojo : AbstractMojo() {
             }
 
             if (pluginErrors.isEmpty()) {
-                log.info("Copying to $buildDir")
-                copyToTarget(generateResourceDir, outFile, Path(buildDir))
-                fragments.forEach { copyToTarget(generateResourceDir, it, Path(buildDir)) }
+                // because this must execute in process-classes, we use
+                // the copy-resources mojo to avoid having to explicitly
+                // call it out in the pom file.
+                copyResources(generateResourceLocation)
             } else {
                 throw MojoFailureException("Schema generation failed due to reported errors")
             }
@@ -113,7 +125,7 @@ class GenerateSchemaMojo : AbstractMojo() {
             throw mojoErr
         } catch (e: Exception) {
             log.error("Failed to generate GraphQL schema output", e)
-            throw MojoFailureException(e)
+            throw MojoFailureException("Failed to generate GraphQL schema output", e)
         }
     }
 
@@ -134,5 +146,24 @@ class GenerateSchemaMojo : AbstractMojo() {
         }
 
         return URLClassLoader(classpathUrls.toTypedArray())
+    }
+
+    private fun copyResources(fromPath: String) {
+        executeMojo(
+            plugin(
+                groupId("org.apache.maven.plugins"),
+                artifactId("maven-resources-plugin"),
+                version("3.3.1")
+            ),
+            goal("copy-resources"),
+            configuration(
+                element("outputDirectory", project!!.build.outputDirectory),
+                element("resources",
+                    element("resource",
+                        element("directory", fromPath))
+                )
+            ),
+            executionEnvironment(project, session, pluginManager)
+        )
     }
 }
