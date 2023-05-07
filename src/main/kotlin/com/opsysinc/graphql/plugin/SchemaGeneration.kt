@@ -23,9 +23,9 @@ import kotlin.reflect.full.declaredMemberProperties
  * discovered schema elements.
  */
 class SchemaGeneration(
-    val index: IndexView,
+    private val index: IndexView,
     val schemaModel: SchemaModel,
-    val projectClassLoader: ClassLoader
+    private val projectClassLoader: ClassLoader
 ) {
     enum class ScanLocation {
         METHODS, FIELDS
@@ -56,49 +56,105 @@ class SchemaGeneration(
             try {
                 if (cls.isInterface) throw ClassModelException(cls.name().toString(), "@NodeEntity is only supported on classes")
                 val entityType = annotation.value("type")?.asEnum()?.let { NodeEntityType.valueOf(it) } ?: NodeEntityType.NODE
-                if (entityType == NodeEntityType.NODE) {
-                    val model = SchemaTypeModel(cls)
-                    scanTypeForInterfaces(cls, model)
-                    val scanLocation = determineScanLocation(cls, NodeKey::class.java)
-                    val errs = if (scanLocation == ScanLocation.METHODS) {
-                        scanTypeGetters(cls, model, false)
-                        scanTypeFields(cls, model, true)
-                    } else {
-                        scanTypeFields(cls, model, false)
-                        scanTypeGetters(cls, model, true)
-                    }
-                    if (errs.isEmpty()) {
-                        schemaModel.addType(model)
-                    } else {
-                        errors.addAll(errs)
-                    }
-                } else {
-                    val model = SchemaRelationTypeModel(cls)
-                    val ifaceErrs = scanTypeForInterfaces(cls, model)
-                    errors.addAll(ifaceErrs)
-                    // this uses both getters and fields to identify schema properties
-                    val scanLocation = determineScanLocation(cls, EndNode::class.java)
-                    val errs = if (scanLocation == ScanLocation.METHODS) {
-                        // This will prioritize getters but also pick up fields if specifically annotated @NodeAttribute
-                        scanTypeGetters(cls, model, false)
-                        scanTypeFields(cls, model, true)
-                    } else {
+                val superClsName = cls.superName()
+                val addlInterfaces = if (superClsName != null)
+                    scanSuper(superClsName, cls.name(), entityType)
+                else
+                    emptyList()
+                val ifaces = addlInterfaces.joinToString(", ")
 
-                        scanTypeFields(cls, model, false)
-                        scanTypeGetters(cls, model, true)
-                    }
-                    if (errs.isEmpty()) {
-                        schemaModel.addType(model)
-                    } else {
-                        errors.addAll(errs)
-                    }
+                val model = when (entityType) {
+                    NodeEntityType.NODE -> buildNodeEntityModel(cls)
+                    NodeEntityType.RELATION -> buildRelationEntityModel(cls)
                 }
-            } catch (e: ModelException) {
+                model?.let {
+                    addlInterfaces.forEach(model::addInterface)
+                    schemaModel.addType(model)
+                }
+           } catch (e: ModelException) {
                 errors.add(e)
             } catch (e: RuntimeException) {
                 throw IllegalArgumentException("Problem with annotations on ${cls.name()}", e)
             }
         }
+    }
+    
+    private fun buildNodeEntityModel (cls : ClassInfo) : SchemaTypeModel? {
+        val model = SchemaTypeModel(cls)
+        scanTypeForInterfaces(cls, model)
+        val scanLocation = determineScanLocation(cls, NodeKey::class.java)
+        val errs = if (scanLocation == ScanLocation.METHODS) {
+            scanTypeGetters(cls, model, false)
+            scanTypeFields(cls, model, true)
+        } else {
+            scanTypeFields(cls, model, false)
+            scanTypeGetters(cls, model, true)
+        }
+        return if (errs.isEmpty()) model else null
+    }
+    
+    private fun buildRelationEntityModel(cls: ClassInfo) : SchemaTypeModel? {
+        val model = SchemaRelationTypeModel(cls)
+        val ifaceErrs = scanTypeForInterfaces(cls, model)
+        errors.addAll(ifaceErrs)
+        // this uses both getters and fields to identify schema properties
+        val scanLocation = determineScanLocation(cls, EndNode::class.java)
+        val errs = if (scanLocation == ScanLocation.METHODS) {
+            // This will prioritize getters but also pick up fields if specifically annotated @NodeAttribute
+            scanTypeGetters(cls, model, false)
+            scanTypeFields(cls, model, true)
+        } else {
+
+            scanTypeFields(cls, model, false)
+            scanTypeGetters(cls, model, true)
+        }
+        return if (errs.isEmpty()) model else null
+    }
+
+    /**
+     * Scans super types, return a list specifically of non-ignored, non-entity
+     * superclasses as InterfaceTypeModel.
+     * These will generate interfaces and be added as interface types for the schema
+     */
+    private fun scanSuper(superName: DotName, subClassName: DotName, subClassType: NodeEntityType) : Collection<InterfaceTypeModel> {
+        // this will scan a super type which is referenced. It may or may not be
+        // a NodeEntity; it may or may not be in the index view; it may or may not
+        // have already been scanned.
+        val interfacesDiscovered = mutableListOf<InterfaceTypeModel>()
+        val superCls = index.getClassByName(superName)
+        val nextSuperName = superCls?.superName()
+        if (nextSuperName != null)
+            interfacesDiscovered.addAll(scanSuper(nextSuperName, superName, subClassType))
+        val hasScanned = schemaModel.hasTypeModel(superName)
+        if (!hasScanned && superCls != null && !superCls.javaClass.equals(java.lang.Object::class.java)) {
+
+            // super class found in index and it is a real class to analyze
+            val ignore = superCls.annotation(NodeIgnore::class.java)
+            val entity = superCls.annotation(NodeEntity::class.java)
+            if (ignore == null) {
+                val entityType = entity?.value("type")?.asEnum()?.let { NodeEntityType.valueOf(it) } ?: subClassType
+                if (entityType != subClassType)
+                    throw ClassModelException(superName.toString(), "Entity type $entityType does not match subclass $subClassName.")
+                if (entity != null) {
+                    val model = when (entityType) {
+                        NodeEntityType.NODE -> buildNodeEntityModel(superCls)
+                        NodeEntityType.RELATION -> buildRelationEntityModel(superCls)
+                    }
+                    model?.let { schemaModel.addType(model) }
+                } else {
+                    try {
+                        val model = buildInterfaceModel(superCls, null)
+                        schemaModel.addInterface(model)
+                        interfacesDiscovered.add(model)
+                    } catch (err : ModelException) {
+                        errors.add(err)
+                    }
+                }
+            }
+        } else {
+            schemaModel.getInterface(superName)?.let { interfacesDiscovered.add(it) }
+        }
+        return interfacesDiscovered
     }
 
     private fun scanInterfaces() {
@@ -109,14 +165,31 @@ class SchemaGeneration(
                     "@SchemaInterface is only supported on interfaces")
                 val annotationName = annotation.value("schemaName")?.asString()
                 val workingName = if (annotationName != null && annotationName.trim().isNotEmpty()) annotationName else cls.simpleName()
-                val model = InterfaceTypeModel(cls, workingName)
-                scanInterfaceGetters(cls, model)
+                val model = buildInterfaceModel(cls, workingName)
                 schemaModel.addInterface(model)
             } catch (e: ModelException) {
                 // we will skip this but add errors
                 errors.add(e)
             }
         }
+    }
+
+    /**
+     * This represents a GraphQL schema interface, which could be either a Java
+     * interface implemented by the entity class, or a non-entity superclass,
+     * i.e., superclass of the entity class that does not itself have @NodeEntity
+     */
+    private fun buildInterfaceModel(cls: ClassInfo, schemaName: String?) : InterfaceTypeModel {
+        val workingName = if (schemaName != null && schemaName.isNotBlank())
+            schemaName
+        else
+            "${cls.simpleName()}${SchemaModel.ABSTRACT_INTERFACE_SUFFIX}"
+        val model = InterfaceTypeModel(cls, workingName)
+        if (!cls.isInterface) {
+            scanTypeFields(cls, model, false)
+        }
+        scanInterfaceGetters(cls, model)
+        return model
     }
 
     private fun scanEnums() {
@@ -140,7 +213,9 @@ class SchemaGeneration(
 
     private fun scanInterfaceGetters(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
         val errs = mutableListOf<ModelException>()
-        errs.addAll(scanDeclaredGetters(cls, typeModel, false))
+        // if this is a non-entity class instead of interface, the getters might
+        // override field scan, so they will require @NodeAttribute
+        errs.addAll(scanDeclaredGetters(cls, typeModel, !cls.isInterface))
         val sup = cls.interfaceNames()
         sup.forEach {
             val supCls = index.getClassByName(it)
@@ -315,12 +390,18 @@ class SchemaGeneration(
                 || (type.kind() == Type.Kind.PARAMETERIZED_TYPE && isCollectionType(type.asParameterizedType()))
         val required = isRequiredType(getter, type)
         val na = getter.annotation(NodeAttribute::class.java)
-        val relationName = na?.value("relation")?.asString()
+        val elementType = getElementType(type)
+        val relatedEntityRelationship = relationNameFromElement(elementType)
+        val acrossRelationEntity = relatedEntityRelationship != null
+
+        val relationName = relatedEntityRelationship
+            ?: na?.value("relation")?.asString()
             ?: throw AttributeModelException(getter.name(), getter.declaringClass().name().toString(),
                 "Non-scalar property requires @NodeAttribute with relationship."
             )
         val direction = RelationDirection.OUT
-        return RelationshipAttributeModel(name, getElementType(type), relationName, direction, required, collection)
+        return RelationshipAttributeModel(name, elementType, relationName, direction,
+            acrossRelationEntity, required, collection)
     }
 
     private fun scanTypeFields(cls: ClassInfo,
@@ -442,12 +523,18 @@ class SchemaGeneration(
         val collection = type.kind() == Type.Kind.ARRAY
                 || (type.kind() == Type.Kind.PARAMETERIZED_TYPE && isCollectionType(type.asParameterizedType()))
         val required = isRequiredType(field, type)
+        val elementType = getElementType(type)
         val na = field.annotation(NodeAttribute::class.java)
-        val relationName = na?.value("relation")?.asString()
+        val relatedEntityRelationship = relationNameFromElement(elementType)
+        val acrossRelationEntity = relatedEntityRelationship != null
+
+        val relationName = relatedEntityRelationship
+            ?: na?.value("relation")?.asString()
             ?: throw AttributeModelException(field.name(), field.declaringClass().name().toString(),
                 "Non-scalar property '$name' requires @NodeAttribute with relationship.")
         val direction = RelationDirection.OUT
-        return RelationshipAttributeModel(name, getElementType(type), relationName, direction, required, collection)
+        return RelationshipAttributeModel(name, elementType, relationName, direction,
+            acrossRelationEntity, required, collection)
     }
 
     private fun createEnumFromType(enumType: ClassType) : EnumType {
@@ -641,14 +728,43 @@ class SchemaGeneration(
         return decapitalize(mtdName)
     }
 
+    /**
+     * Check if the element type is an indexed class annotated
+     * @NodeEntity(type=RELATION, label="rel_name")
+     * and return "rel_name" or else null.
+     */
+    private fun relationNameFromElement(elementType: Type) : String? {
+        val elemCls = index.getClassByName(elementType.name())
+        val ne = elemCls?.annotation(NodeEntity::class.java)
+        if ("RELATION" == ne?.value("type")?.asEnum()) {
+            val lbl = ne.value("label").asStringArray()
+            if (lbl.size == 1)
+                return lbl[0]
+        }
+        return null
+    }
+
+    private fun keyAnnotation(cls: ClassInfo, keyAnnoType: Class<out Annotation>) : AnnotationInstance? {
+        var annotated = cls.annotation(keyAnnoType)
+        if (annotated == null) {
+            val superCls = index.getClassByName(cls.superName())
+            if (superCls != null)
+                annotated = keyAnnotation(superCls, keyAnnoType)
+        }
+        return annotated
+    }
+
     private fun determineScanLocation(cls: ClassInfo, keyAnnoType: Class<out Annotation>) : ScanLocation {
         // look for @NodeKey annotation on this class
-        val keyAnnotation = cls.annotation(keyAnnoType)
-            ?: throw ClassModelException(cls.name().toString(), "Unable to find @${keyAnnoType.simpleName} for class")
-        return if (keyAnnotation.target().kind() == AnnotationTarget.Kind.FIELD)
-            ScanLocation.FIELDS
-        else
+        val keyAnnotation = keyAnnotation(cls, keyAnnoType)
+        if (keyAnnotation == null)
+            throw ClassModelException(cls.name().toString(), "Unable to find @${keyAnnoType.simpleName} for class")
+
+        // for non-entity base classes there may not be @NodeKey, default to fields over methods
+        return if (keyAnnotation.target()?.kind() == AnnotationTarget.Kind.METHOD)
             ScanLocation.METHODS
+        else
+            ScanLocation.FIELDS
     }
 
     private fun decapitalize(name: String): String {

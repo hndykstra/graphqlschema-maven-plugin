@@ -10,20 +10,20 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
     }
 
     val schemaName : String
-    val nodeEntity: AnnotationInstance
+    val nodeEntity: AnnotationInstance?
     val simpleAttributes =  mutableListOf<SimpleAttributeModel>()
     val relationshipAttributes = mutableListOf<RelationshipAttributeModel>()
     val interfaces = mutableListOf<SchemaTypeModel>()
     val ignoreAttrs = mutableListOf<String>()
 
     init {
-        // node entity is required to create a model
+        // node entity is not required to create a model if it is a non-entity base class
         nodeEntity = classInfo.annotation(NodeEntity::class.java)
-            ?: throw IllegalArgumentException("${classInfo.name()}: Scanned but no @NodeEntity annottion")
 
-        val label = nodeEntity.value("label")?.asStringArray()
-        schemaName = if (overrideName != null) overrideName
-                     else (if (label == null || label.size == 0) classInfo.simpleName() else label[0])
+        val label = nodeEntity?.value("label")?.asStringArray()
+        schemaName = overrideName ?:
+            if (label == null || label.size == 0) classInfo.simpleName()
+            else label[0]
     }
 
     fun ignoreAttribute(attrName: String) {
@@ -65,7 +65,8 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
         val attrs = simpleAttributes.asSequence()
             .map { INDENT + it.schemaName }
             .joinToString("\n")
-        return "fragment ${schemaName}Fields on $schemaName {" + "\n" + attrs + "\n" + "}"
+        val fragmentName = fragmentName()
+        return "fragment ${fragmentName} on $schemaName {" + "\n" + attrs + "\n" + "}"
     }
 
     open fun generateTypeStatement() : String {
@@ -93,5 +94,9 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
 
     open fun generateEndStatement() : String {
         return "}"
+    }
+
+    open fun fragmentName() : String {
+        return "${schemaName}Fields"
     }
 }

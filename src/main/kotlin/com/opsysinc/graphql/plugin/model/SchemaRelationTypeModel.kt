@@ -16,10 +16,12 @@ class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo,
 
     init {
         // read relationship info from the NodeEntity annotation
-        val label = nodeEntity.value("label")?.asStringArray()
-        if (label == null || label.size != 1) throw ClassModelException(classInfo.name().toString(),
+        val label = nodeEntity?.value("label")?.asStringArray()
+        if (nodeEntity != null && (label == null || label.size != 1))
+            throw ClassModelException(classInfo.name().toString(),
             "Relation entity requires exactly one label")
-        relationName = label[0]
+        // empty relation name for non-entity super class of relation entity
+        relationName = label?.get(0) ?: ""
     }
 
     /**

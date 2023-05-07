@@ -15,7 +15,9 @@ import org.jboss.jandex.Type
  * @property collection Whether the attribute is a collection type in the schema, e.g. schemaName: [SchemaType]
  */
 class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
-                                  val relationshipName: String, val direction: RelationDirection, val required: Boolean, val collection: Boolean) {
+                                  val relationshipName: String, val direction: RelationDirection,
+                                  val acrossRelationEntity: Boolean,
+                                  val required: Boolean, val collection: Boolean) {
     var schemaTypeName: String? = null
 
     fun resolve(model: SchemaModel, owningType: SchemaTypeModel) {
@@ -29,7 +31,10 @@ class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
         val type = if (collection) "[$schemaTypeName!]" else schemaTypeName
         val base = if (required) "$schemaName : $type!" else "$schemaName : $type"
         // @relation(name: "USES_DOCUMENT_CLASS", direction: OUT)
-        val relation = " @relation(name: \"$relationshipName\", direction: ${direction.name})"
+        val relation = if (acrossRelationEntity)
+            "" // in this case @relation is on the type for the relation type
+        else
+            " @relation(name: \"$relationshipName\", direction: ${direction.name})"
         return base + relation
     }
 }

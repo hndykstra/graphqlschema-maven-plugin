@@ -52,7 +52,6 @@ class SchemaGenerationMain (args: Array<String>) {
         allErrors.addAll(schema.validate())
 
         allErrors.forEach { err ->
-            println(err.message)
             logger.error(err.message)
         }
 

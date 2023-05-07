@@ -28,7 +28,7 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
     private val declaredMappings = mutableSetOf<GraphQLScalar>()
 
     private val modelTypes = mutableMapOf<DotName, SchemaTypeModel>()
-    private val interfaces = mutableListOf<InterfaceTypeModel>()
+    private val interfaces = mutableMapOf<DotName, InterfaceTypeModel>()
     private val mentions = mutableListOf<ModelClassMention>()
     private val ignoreMentions = mutableListOf<ModelClassMention>()
 
@@ -76,12 +76,16 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
     }
 
     fun addInterface(interfaceData: InterfaceTypeModel) {
-        interfaces.add(interfaceData)
+        interfaces[interfaceData.classInfo.name()] = interfaceData
         modelTypes[interfaceData.classInfo.name()] = interfaceData
     }
 
     fun addType(typeData: SchemaTypeModel) {
         modelTypes[typeData.classInfo.name()] = typeData
+    }
+
+    fun hasTypeModel(typeName: DotName) : Boolean {
+        return modelTypes.containsKey(typeName) || interfaces.containsKey(typeName)
     }
 
     fun ignoreMention(mentionedType: Type, sourceClass: ClassInfo, attributeName: String?) {
@@ -147,16 +151,18 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
     }
 
     fun generateFragments(toDir: Path) : Collection<Path> {
-        return modelTypes.values.asSequence()
+        val concreteFragments = modelTypes.values.asSequence()
             .map { type ->
-                val file = toDir.resolve("${type.schemaName}Fields.fragment")
+                val fName = type.fragmentName()
+                val file = toDir.resolve("${fName}.fragment")
                 BufferedWriter(file.writer()).use { w ->
                     w.write(type.generateFragment())
                     w.flush()
                 }
                 file
             }
-            .toList()
+            .toMutableList()
+        return concreteFragments
     }
 
     fun generateSchema(toFile: Path) {
@@ -181,7 +187,7 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
             w.flush()
 
             // then interfaces
-            interfaces.sortedBy { it.schemaName }
+            interfaces.values.sortedBy { it.schemaName }
                 .forEach {
                     w.write(it.generate())
                     w.newLine()
@@ -245,8 +251,8 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
         return getScalarType(typeName.toString())
     }
 
-    fun getInterface(ifName: DotName) : SchemaTypeModel? {
-        return interfaces.find { it.classInfo.name().equals(ifName) }
+    fun getInterface(ifName: DotName) : InterfaceTypeModel? {
+        return interfaces[ifName]
     }
 
     companion object {
@@ -270,5 +276,7 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
             Instant::class.java.name to NEO4J_SCALAR_DATETIME,
             Duration::class.java.name to NEO4J_SCALAR_DURATION
         )
+
+        val ABSTRACT_INTERFACE_SUFFIX = "Intf"
     }
 }
