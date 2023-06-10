@@ -58,7 +58,7 @@ class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo,
         val workingFromType = fromType
 
         if (workingToType == null) throw ClassModelException(classInfo.name().toString(), "Relation entity does not have @EndNode")
-        toModel = model.getTypeModel(workingToType)
+        toModel = model.getTypeOrInterfaceModel(workingToType)
         if (toModel == null) throw ClassModelException(classInfo.name().toString(), "Relation entity end node is not a valid entity")
 
         fromModel = workingFromType?.let { model.getTypeModel(it) } ?: model.findFromTypeModel(this)

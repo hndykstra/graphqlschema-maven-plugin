@@ -61,7 +61,6 @@ class SchemaGeneration(
                     scanSuper(superClsName, cls.name(), entityType)
                 else
                     emptyList()
-                val ifaces = addlInterfaces.joinToString(", ")
 
                 val model = when (entityType) {
                     NodeEntityType.NODE -> buildNodeEntityModel(cls)
@@ -251,13 +250,24 @@ class SchemaGeneration(
     }
 
     private fun scanTypeForInterfaces(cls: ClassInfo, typeModel: SchemaTypeModel) : List<ModelException> {
-        cls.interfaceNames().forEach { ifName ->
+        val ifNameList = allInterfaceNames(cls)
+        ifNameList.forEach { ifName ->
             // assume that all schema interfaces are scanned already because interface scanning is before types
             schemaModel.getInterface(ifName)?.let {
                 typeModel.addInterface(it)
             }
         }
         return emptyList()
+    }
+
+    private fun allInterfaceNames(cls: ClassInfo) : Set<DotName> {
+        val ifList = mutableSetOf<DotName>()
+        cls.interfaceNames().forEach { ifName -> ifList.add(ifName) }
+        val superName = cls.superName()
+        val superCls = if (superName != null) index.getClassByName(superName) else null
+        if (superCls != null)
+            ifList.addAll(allInterfaceNames(superCls))
+        return ifList
     }
 
     private fun scanDeclaredGetters(cls: ClassInfo,

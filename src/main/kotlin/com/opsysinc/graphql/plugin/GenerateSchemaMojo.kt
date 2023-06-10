@@ -3,7 +3,6 @@ package com.opsysinc.graphql.plugin
 import com.opsysinc.graphql.plAugin.ModelException
 import com.opsysinc.graphql.plugin.model.SchemaModel
 import org.apache.maven.execution.MavenSession
-import org.apache.maven.model.Resource
 import org.apache.maven.plugin.AbstractMojo
 import org.apache.maven.plugin.BuildPluginManager
 import org.apache.maven.plugin.MojoFailureException
@@ -21,7 +20,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import kotlin.io.path.Path
-import kotlin.io.path.exists
 import org.twdata.maven.mojoexecutor.MojoExecutor.*
 
 @Mojo(name = "graphql-schema",
@@ -149,6 +147,7 @@ class GenerateSchemaMojo : AbstractMojo() {
     }
 
     private fun copyResources(fromPath: String) {
+        log.info("Copy generated resources to ${project!!.build.outputDirectory}")
         executeMojo(
             plugin(
                 groupId("org.apache.maven.plugins"),

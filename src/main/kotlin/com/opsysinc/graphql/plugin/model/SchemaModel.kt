@@ -208,6 +208,13 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
         }
     }
 
+    fun getTypeOrInterfaceModel(clsType: Type) : SchemaTypeModel? {
+        var mdl = getTypeModel(clsType)
+        if (mdl == null)
+            mdl = getInterface(clsType.name())
+        return mdl
+    }
+
     fun getTypeModel(clsType: Type) : SchemaTypeModel? {
         return modelTypes[clsType.name()]
     }
