@@ -409,8 +409,10 @@ class SchemaGeneration(
             ?: throw AttributeModelException(getter.name(), getter.declaringClass().name().toString(),
                 "Non-scalar property requires @NodeAttribute with relationship."
             )
-        val direction = RelationDirection.OUT
-        return RelationshipAttributeModel(name, elementType, relationName, direction,
+        val direction = na?.value("direction")?.asString() ?: "OUT"
+
+        return RelationshipAttributeModel(name, elementType, relationName,
+            RelationDirection.valueOf(direction),
             acrossRelationEntity, required, collection)
     }
 
@@ -542,8 +544,8 @@ class SchemaGeneration(
             ?: na?.value("relation")?.asString()
             ?: throw AttributeModelException(field.name(), field.declaringClass().name().toString(),
                 "Non-scalar property '$name' requires @NodeAttribute with relationship.")
-        val direction = RelationDirection.OUT
-        return RelationshipAttributeModel(name, elementType, relationName, direction,
+        val direction = na?.value("direction")?.asString()
+        return RelationshipAttributeModel(name, elementType, relationName, RelationDirection.valueOf(direction ?: "OUT"),
             acrossRelationEntity, required, collection)
     }
 
