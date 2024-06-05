@@ -119,6 +119,10 @@ class GenerateSchemaMojo : AbstractMojo() {
             } else {
                 throw MojoFailureException("Schema generation failed due to reported errors")
             }
+
+            val constrFile = schemaFile.replace(".graphql", ".constraint")
+            log.info("Writing key constraints to $constrFile")
+            model.generateConstraints(packageDir.resolve(constrFile))
         } catch (mojoErr: MojoFailureException) {
             throw mojoErr
         } catch (e: Exception) {

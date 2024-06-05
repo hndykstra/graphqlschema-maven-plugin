@@ -288,6 +288,7 @@ class SchemaGeneration(
                     val ignoreIt = m.hasAnnotation(NodeIgnore::class.java)
                     if (startNode == null && endNode == null) {
                         try {
+                            val key = m.annotation(NodeKey::class.java)
                             val type = m.returnType()
                             val scalarType = getSchemaScalar(type)
                             if (scalarType != null) {
@@ -296,6 +297,8 @@ class SchemaGeneration(
                                     typeModel.ignoreAttribute(scalarModel.schemaName)
                                 } else {
                                     typeModel.addSimpleAttribute(scalarModel)
+                                    if (key != null)
+                                        typeModel.addKeyAttribute(scalarModel)
                                 }
                             } else {
                                 val enumType = extractEnumType(type)
@@ -312,6 +315,8 @@ class SchemaGeneration(
                                         typeModel.ignoreAttribute(enumModel.schemaName)
                                     } else {
                                         typeModel.addSimpleAttribute(enumModel)
+                                        if (key != null)
+                                            typeModel.addKeyAttribute(enumModel)
                                     }
                                 } else {
                                     val relModel = createRelationshipAttributeForGetter(m)
@@ -444,6 +449,7 @@ class SchemaGeneration(
                     val endNode = field.annotation(EndNode::class.java)
                     val ignoreIt = field.hasAnnotation(NodeIgnore::class.java)
                     if (startNode == null && endNode == null) {
+                        val key = field.annotation(NodeKey::class.java)
                         val type = field.type()
                         val scalarType = getSchemaScalar(type)
                         if (scalarType != null) {
@@ -452,6 +458,8 @@ class SchemaGeneration(
                                 typeModel.ignoreAttribute(scalarModel.schemaName)
                             } else {
                                 typeModel.addSimpleAttribute(scalarModel)
+                                if (key != null)
+                                    typeModel.addKeyAttribute(scalarModel)
                             }
                         } else {
                             val enumType = extractEnumType(type)
@@ -468,6 +476,8 @@ class SchemaGeneration(
                                     typeModel.ignoreAttribute(enumModel.schemaName)
                                 } else {
                                     typeModel.addSimpleAttribute(enumModel)
+                                    if (key != null)
+                                        typeModel.addKeyAttribute(enumModel)
                                 }
                             } else {
                                 val relModel = createRelationshipAttributeForField(field)

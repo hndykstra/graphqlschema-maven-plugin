@@ -150,6 +150,25 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
         return errors
     }
 
+    fun generateConstraints(toFile: Path) {
+        BufferedWriter(toFile.writer()).use { w ->
+            modelTypes.values.asSequence()
+                .forEach { schemaType ->
+                    if (schemaType !is SchemaRelationTypeModel && schemaType.key.size == 1) {
+                        val keyAttr = schemaType.key.first()
+                        val keyIndexName = "index_${schemaType.schemaName}_${keyAttr.schemaName}"
+                        val keyConstrName = "constraint_${schemaType.schemaName}_${keyAttr.schemaName}"
+                        w.write("CREATE INDEX ${keyIndexName} IF NOT EXISTS FOR (n:${schemaType.schemaName}) ON (n.${keyAttr.schemaName})")
+                        w.newLine()
+                        w.write("CREATE CONSTRAINT ${keyConstrName} IF NOT EXISTS FOR (n:${schemaType.schemaName}) REQUIRE n.${keyAttr.schemaName} IS UNIQUE;")
+                        w.newLine()
+                        w.newLine()
+                    }
+                }
+            w.flush()
+        }
+    }
+
     fun generateFragments(toDir: Path) : Collection<Path> {
         val concreteFragments = modelTypes.values.asSequence()
             .map { type ->

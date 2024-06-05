@@ -15,6 +15,7 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
     val relationshipAttributes = mutableListOf<RelationshipAttributeModel>()
     val interfaces = mutableListOf<SchemaTypeModel>()
     val ignoreAttrs = mutableListOf<String>()
+    val key = mutableListOf<SimpleAttributeModel>()
 
     init {
         // node entity is not required to create a model if it is a non-entity base class
@@ -36,6 +37,10 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
         return !ignoreAttrs.contains(attr.schemaName)
                 && !simpleAttributes.any { it.schemaName == attr.schemaName }
                 && simpleAttributes.add(attr)
+    }
+
+    open fun addKeyAttribute(attr: SimpleAttributeModel) : Boolean {
+        return key.add(attr);
     }
 
     open fun addRelationshipAttribute(attr: RelationshipAttributeModel) : Boolean {
