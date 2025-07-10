@@ -2,6 +2,7 @@ package com.opsysinc.graphql.plugin.model
 
 import com.opsysinc.graphql.plAugin.ModelException
 import com.opsysinc.graphql.plugin.ScalarMapping
+import org.apache.maven.plugin.logging.Log
 import org.jboss.jandex.ClassInfo
 import org.jboss.jandex.DotName
 import org.jboss.jandex.Type
@@ -20,7 +21,7 @@ class ModelClassMention (val mentionedClass: DotName, val sourceClass: ClassInfo
  * Represents the schema related information for an attribute that is a GraphQL scalar type or
  * collection of scalar types.
  */
-class SchemaModel (includeNeo4jScalars: Boolean = false) {
+class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
     private val enumTypes = mutableMapOf<DotName, EnumType>()
 
     /** Maps fully qualified class name to the GraphQLScalar type */
@@ -69,6 +70,7 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
 
     fun addScalarMapping(mapping: ScalarMapping) {
         val asScalar = GraphQLScalar(mapping.scalarName)
+        log.info("Add scalar ${asScalar.scalarRepresentation}")
         declaredMappings.add(asScalar)
         mapping.classes.forEach { clsName ->
             scalarTypes[clsName] = asScalar
@@ -76,11 +78,13 @@ class SchemaModel (includeNeo4jScalars: Boolean = false) {
     }
 
     fun addInterface(interfaceData: InterfaceTypeModel) {
+        log.info("Add interface ${interfaceData.schemaName}")
         interfaces[interfaceData.classInfo.name()] = interfaceData
         modelTypes[interfaceData.classInfo.name()] = interfaceData
     }
 
     fun addType(typeData: SchemaTypeModel) {
+        log.info("Add type ${typeData.schemaName}")
         modelTypes[typeData.classInfo.name()] = typeData
     }
 

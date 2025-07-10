@@ -7,6 +7,7 @@ import com.opsysinc.graphql.plAugin.ClassModelException
 import com.opsysinc.graphql.plAugin.ModelException
 import com.opsysinc.graphql.plugin.model.*
 import org.apache.maven.plugin.MojoFailureException
+import org.apache.maven.plugin.logging.Log
 import org.jboss.jandex.*
 import org.jboss.jandex.AnnotationTarget
 import org.slf4j.LoggerFactory
@@ -23,6 +24,7 @@ import kotlin.reflect.full.declaredMemberProperties
  * discovered schema elements.
  */
 class SchemaGeneration(
+    val log: Log,
     private val index: IndexView,
     val schemaModel: SchemaModel,
     private val projectClassLoader: ClassLoader
@@ -40,6 +42,7 @@ class SchemaGeneration(
      * the data, log errors, throw final exception, etc.
      */
     fun scan() : List<ModelException> {
+        log.info("Begin scan index")
         // this is in order because some scans depend on other scans being done
         scanEnums()
         scanInterfaces()
@@ -53,6 +56,7 @@ class SchemaGeneration(
     private fun scanTypes() {
         index.getAnnotations(NodeEntity::class.java).forEach { annotation ->
             val cls = annotation.target().asClass()!!
+            log.debug("Scan @NodeEntity ${cls.name()}")
             try {
                 if (cls.isInterface) throw ClassModelException(cls.name().toString(), "@NodeEntity is only supported on classes")
                 val entityType = annotation.value("type")?.asEnum()?.let { NodeEntityType.valueOf(it) } ?: NodeEntityType.NODE
@@ -160,6 +164,7 @@ class SchemaGeneration(
         index.getAnnotations(SchemaInterface::class.java).forEach { annotation ->
             try {
                 val cls = annotation.target().asClass()!!
+                log.debug("Scan @SchemaInterface ${cls.name()}")
                 if (!cls.isInterface) throw ClassModelException(cls.name().toString(),
                     "@SchemaInterface is only supported on interfaces")
                 val annotationName = annotation.value("schemaName")?.asString()
@@ -199,6 +204,7 @@ class SchemaGeneration(
             try {
                 // this throws or returns non-null
                 val cls = annotation.target().asClass()!!
+                log.debug("Process @SchemaEnum ${cls.name()}")
                 if (!schemaModel.hasEnum(cls.name())) {
                     schemaModel.addEnumType(cls.name(), createEnumFromClass(annotation, cls))
                 }
