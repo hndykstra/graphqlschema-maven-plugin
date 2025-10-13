@@ -40,7 +40,7 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
     }
 
     open fun addKeyAttribute(attr: SimpleAttributeModel) : Boolean {
-        return key.add(attr);
+        return key.add(attr)
     }
 
     open fun addRelationshipAttribute(attr: RelationshipAttributeModel) : Boolean {
@@ -78,7 +78,7 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
         if (interfaces.isNotEmpty()) {
             val interfaceNames = interfaces.asSequence()
                 .map { it.schemaName }
-                .joinToString(", ")
+                .joinToString(" & ")
             return "type $schemaName implements $interfaceNames {"
         } else {
             return "type $schemaName {"
