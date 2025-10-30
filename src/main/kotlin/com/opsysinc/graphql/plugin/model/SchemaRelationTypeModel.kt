@@ -5,6 +5,10 @@ import com.opsysinc.graphql.plAugin.ClassModelException
 import org.jboss.jandex.ClassInfo
 import org.jboss.jandex.Type
 
+/**
+ * Represents a type in the model that corresponds to a graph DB relationship
+ * with properties. The schema will require some special treatment for this.
+ */
 class SchemaRelationTypeModel (classInfo: ClassInfo): SchemaTypeModel(classInfo, classInfo.simpleName()) {
     var fromType : Type? = null
     var fromModel : SchemaTypeModel? = null

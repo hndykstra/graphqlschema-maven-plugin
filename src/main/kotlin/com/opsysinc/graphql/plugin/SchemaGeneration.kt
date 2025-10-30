@@ -421,10 +421,10 @@ class SchemaGeneration(
                 "Non-scalar property requires @NodeAttribute with relationship."
             )
         val direction = na?.value("direction")?.asString() ?: "OUT"
-
+        val cascades = na?.value("cascade")?.asEnumArray() ?: arrayOf<String>()
         return RelationshipAttributeModel(name, elementType, relationName,
             RelationDirection.valueOf(direction),
-            acrossRelationEntity, required, collection)
+            acrossRelationEntity, required, collection, cascades)
     }
 
     private fun scanTypeFields(cls: ClassInfo,
@@ -561,8 +561,9 @@ class SchemaGeneration(
             ?: throw AttributeModelException(field.name(), field.declaringClass().name().toString(),
                 "Non-scalar property '$name' requires @NodeAttribute with relationship.")
         val direction = na?.value("direction")?.asString()
+        val cascades = na?.value("cascade")?.asEnumArray() ?: arrayOf<String>()
         return RelationshipAttributeModel(name, elementType, relationName, RelationDirection.valueOf(direction ?: "OUT"),
-            acrossRelationEntity, required, collection)
+            acrossRelationEntity, required, collection, cascades)
     }
 
     private fun createEnumFromType(enumType: ClassType) : EnumType {

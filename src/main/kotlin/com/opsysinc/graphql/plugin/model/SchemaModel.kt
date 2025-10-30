@@ -2,6 +2,7 @@ package com.opsysinc.graphql.plugin.model
 
 import com.opsysinc.graphql.plAugin.ModelException
 import com.opsysinc.graphql.plugin.ScalarMapping
+import com.opsysinc.graphql.plugin.Util
 import org.apache.maven.plugin.logging.Log
 import org.jboss.jandex.ClassInfo
 import org.jboss.jandex.DotName
@@ -36,13 +37,13 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
     init {
         // add the basic scalar mappings for defined scalar types
         scalarTypes = mutableMapOf(
-            java.lang.Integer::class.java.name to GraphQLScalar.GraphQLInt,
+            Integer::class.java.name to GraphQLScalar.GraphQLInt,
             java.lang.Long::class.java.name to GraphQLScalar.GraphQLInt,
             java.lang.Short::class.java.name to GraphQLScalar.GraphQLInt,
             Int::class.java.name to GraphQLScalar.GraphQLInt,
             Long::class.java.name to GraphQLScalar.GraphQLInt,
             Short::class.java.name to GraphQLScalar.GraphQLInt,
-            java.lang.Integer.TYPE.name to GraphQLScalar.GraphQLInt,
+            Integer.TYPE.name to GraphQLScalar.GraphQLInt,
             java.lang.Long.TYPE.name to GraphQLScalar.GraphQLInt,
             java.lang.Short.TYPE.name to GraphQLScalar.GraphQLInt,
 
@@ -171,6 +172,203 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
                 }
             w.flush()
         }
+    }
+
+    fun generateQueries(toDir: Path) {
+        for (model in modelTypes.values.asSequence()) {
+            if (model !is InterfaceTypeModel && model !is SchemaRelationTypeModel) {
+                // for now we'll just generate each model
+                // maybe we need to enable some logic to handle abstractions and interfaces
+                // or classes for which queries aren't needed.
+                generateGetAllQuery(model, toDir)
+                generateGetByKeyQuery(model, toDir)
+            }
+        }
+    }
+
+    private fun generateGetAllQuery(model: SchemaTypeModel, toDir: Path) {
+        val schemaQueryName = "${Util.decapitalize(model.schemaName)}"
+        val name = Util.pluralize(schemaQueryName)
+        val fragmentName = "${model.schemaName}Fields"
+        val fragments = mutableSetOf(fragmentName)
+        val rels = mutableMapOf<String, RecursiveRelationData>()
+        // default behavior of relationships that are included in default queries.
+        model.relationshipAttributes.forEach { r ->
+            val name = r.schemaName
+            val relatedType = getTypeOrInterfaceModel(r.schemaType)
+            if (relatedType != null) {
+                if (relatedType is SchemaRelationTypeModel) {
+                    rels[name] = buildRelationshipRels(r, relatedType, model, mutableSetOf())
+                } else {
+                    rels[name] = buildDeepRels(r, relatedType, mutableSetOf())
+                }
+            }
+        }
+
+        // accumulate the fragments (recursively) from all the relations that will use them
+        rels.values.forEach { it.buildFragments(fragments) }
+
+        BufferedWriter(toDir.resolve("${name}.query").writer()).use { w ->
+            w.write("params: {}")
+            w.newLine()
+            w.write("fragments:")
+            w.newLine()
+            writeFragments(w, fragments)
+            w.write("query: |")
+            w.newLine()
+            w.write(" query $name {")
+            w.newLine()
+            w.write("    $schemaQueryName {")
+            w.newLine()
+            w.write("      ...$fragmentName")
+            w.newLine()
+            rels.forEach { (name, data) ->
+                writeRelation(w, name, data, 3)
+            }
+            w.write("    }")
+            w.newLine()
+            w.write("  }")
+            w.newLine()
+        }
+    }
+
+    fun generateGetByKeyQuery(model: SchemaTypeModel, toDir: Path) {
+        val name = "${Util.decapitalize(model.schemaName)}ByKey"
+        val schemaQueryName = "${Util.decapitalize(model.schemaName)}"
+        val fragmentName = "${model.schemaName}Fields"
+        val fragments = mutableSetOf(fragmentName)
+        val rels = mutableMapOf<String, RecursiveRelationData>()
+        // default behavior of relationships that are included in default queries.
+        model.relationshipAttributes.forEach { r ->
+            val name = r.schemaName
+            val relatedType = getTypeOrInterfaceModel(r.schemaType)
+            if (relatedType != null) {
+                rels[name] = buildDeepRels(r, relatedType, mutableSetOf())
+            }
+        }
+
+        // accumulate the fragments (recursively) from all the relations that will use them
+        rels.values.forEach { it.buildFragments(fragments) }
+
+        BufferedWriter(toDir.resolve("${name}.query").writer()).use { w ->
+            w.write("params:")
+            w.newLine()
+            model.key.forEach { keyAttr ->
+                w.write("  ${keyAttr.schemaName}: ${keyAttr.schemaType.scalarRepresentation}")
+                w.newLine()
+            }
+            w.write("fragments:")
+            w.newLine()
+            writeFragments(w, fragments)
+            w.write("query: |")
+            w.newLine()
+            val params = model.key.asSequence()
+                .map { keyAttr -> "$${keyAttr.schemaName}: ${keyAttr.schemaType.scalarRepresentation}!" }
+                .joinToString(separator = ", ")
+            val paramConditions = model.key.asSequence()
+                .map { keyAttr -> "${keyAttr.schemaName}: $${keyAttr.schemaName}" }
+                .joinToString(separator = ", ")
+            w.write("  query $name($params) {")
+            w.newLine()
+            w.write("    $schemaQueryName($paramConditions) {")
+            w.newLine()
+            w.write("      ...$fragmentName")
+            w.newLine()
+            rels.forEach { (name, data) ->
+                writeRelation(w, name, data, 3)
+            }
+            w.write("    }")
+            w.newLine()
+            w.write("  }")
+            w.newLine()
+        }
+    }
+
+    private fun writeFragments(writeTo: BufferedWriter, fragments: Set<String>) {
+        fragments.forEach { fragment ->
+            writeTo.write("  - $fragment")
+            writeTo.newLine()
+        }
+    }
+
+    private fun writeRelation(writeTo: BufferedWriter, schemaName: String, relation: RecursiveRelationData, indentDepth: Int) {
+        val indentStr = "  ".repeat(indentDepth)
+        writeTo.write("$indentStr$schemaName {")
+        writeTo.newLine()
+        if (relation.isRecursive) {
+            writeTo.write("$indentStr  ...${relation.relatedType.fragmentName()}")
+            writeTo.newLine()
+            relation.includedRelations.forEach { includedRelation ->
+                writeRelation(writeTo, includedRelation.relationName, includedRelation, indentDepth + 1)
+            }
+        } else {
+            writeTo.write("$indentStr  ...${relation.relatedType.fragmentName()}")
+            writeTo.newLine()
+        }
+        writeTo.write("$indentStr}")
+        writeTo.newLine()
+    }
+
+    private fun buildDeepRels(relation: RelationshipAttributeModel,
+                              relatedType: SchemaTypeModel,
+                              seen: Set<String>) : RecursiveRelationData {
+        val notPreviouslySeen = !seen.contains(relatedType.schemaName)
+        val isDeep = notPreviouslySeen &&
+                (relation.cascades.contains("DELETE") || relation.cascades.contains("ALL"))
+        val thisType = RecursiveRelationData(isDeep, relation.schemaName, relation, relatedType)
+        println("building rels for relation ${relation.schemaName} [${relatedType.schemaName}")
+        println("seen $seen [new $notPreviouslySeen deep $isDeep]")
+        val newSeen = seen.toMutableSet()
+        newSeen.add(relatedType.schemaName)
+        if (isDeep) {
+            relatedType.relationshipAttributes.forEach { r ->
+                val rType = getTypeOrInterfaceModel(r.schemaType)
+                if (rType != null) {
+                    if (rType is SchemaRelationTypeModel) {
+                        thisType.add(buildRelationshipRels(r, rType, relatedType, newSeen))
+                    } else {
+                        thisType.add(buildDeepRels(r, rType, newSeen))
+                    }
+                }
+            }
+        }
+        return thisType
+    }
+
+    private fun buildRelationshipRels(relationFromSource: RelationshipAttributeModel,
+                                      relatedType: SchemaRelationTypeModel,
+                                      fromType: SchemaTypeModel,
+                                      seen: Set<String>) : RecursiveRelationData {
+        val fromModel = relatedType.fromModel ?: throw IllegalArgumentException("Incomplete relation model - no from Model type inferred")
+        val toModel = relatedType.toModel ?: throw kotlin.IllegalArgumentException("Incomplete relation model - no to Model type inferred")
+
+        // here: relationFromSource is a relationship from a node-type entity to a relation-type entity
+        // this is always "ddep" because we must follow the relationship at least as far as the end node
+        // then we'll need to follow either the @StartNode or @EndNode, depending on the directionality
+        // of the relationFromSource
+        val thisType = RecursiveRelationData(true, relationFromSource.schemaName, relationFromSource, relatedType)
+        println("building relation entity rels for relation ${relationFromSource.schemaName} [${relatedType.schemaName}")
+        if (relationFromSource.direction == RelationDirection.OUT) {
+            // we only want to include the toModel to avoid self-reference
+            // there is no RelationshipAttributeModel for EndNode, but we'll need a synthetic one
+            // - name from relatedType.toName, type from toModel, cascade from relationFromSource
+            val syntheticRelation = RelationshipAttributeModel(relatedType.toName!!, relatedType.toType!!,
+                relatedType.relationName, relationFromSource.direction, acrossRelationEntity = true,
+                required = true, collection = false, cascades = relationFromSource.cascades
+            )
+            thisType.add(buildDeepRels(syntheticRelation, toModel, seen))
+        } else {
+            // we only want to include the frp,Model to avoid self-reference
+            // there is no RelationshipAttributeModel for EndNode, but we'll need a synthetic one
+            // - name from relatedType.fromName, type from fromModel, cascade from relationFromSource
+            val syntheticRelation = RelationshipAttributeModel(relatedType.fromName!!, relatedType.fromType!!,
+                relatedType.relationName, relationFromSource.direction, acrossRelationEntity = true,
+                required = true, collection = false, cascades = relationFromSource.cascades
+            )
+            thisType.add(buildDeepRels(syntheticRelation, fromModel, seen))
+
+        }
+        return thisType
     }
 
     fun generateFragments(toDir: Path) : Collection<Path> {
@@ -307,6 +505,6 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
             Duration::class.java.name to NEO4J_SCALAR_DURATION
         )
 
-        val ABSTRACT_INTERFACE_SUFFIX = "Intf"
+        const val ABSTRACT_INTERFACE_SUFFIX = "Intf"
     }
 }

@@ -17,7 +17,9 @@ import org.jboss.jandex.Type
 class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
                                   val relationshipName: String, val direction: RelationDirection,
                                   val acrossRelationEntity: Boolean,
-                                  val required: Boolean, val collection: Boolean) {
+                                  val required: Boolean,
+                                  val collection: Boolean,
+                                  val cascades: Array<String>) {
     var schemaTypeName: String? = null
 
     fun resolve(model: SchemaModel, owningType: SchemaTypeModel) {
