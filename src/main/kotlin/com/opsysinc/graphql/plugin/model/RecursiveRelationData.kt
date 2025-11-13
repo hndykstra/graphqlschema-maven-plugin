@@ -21,8 +21,8 @@ class RecursiveRelationData(
     }
 
     fun buildFragments(list: MutableSet<String>) {
+        list.add(relatedType.fragmentName())
         if (isRecursive) {
-            list.add(relatedType.fragmentName())
             includedRelationsAdded.forEach {
                 it.buildFragments(list)
             }

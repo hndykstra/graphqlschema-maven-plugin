@@ -8,6 +8,7 @@ import org.jboss.jandex.ClassInfo
 import org.jboss.jandex.DotName
 import org.jboss.jandex.Type
 import java.io.BufferedWriter
+import java.io.PrintWriter
 import java.nio.file.Path
 import java.time.*
 import kotlin.io.path.writer
@@ -33,6 +34,9 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
     private val interfaces = mutableMapOf<DotName, InterfaceTypeModel>()
     private val mentions = mutableListOf<ModelClassMention>()
     private val ignoreMentions = mutableListOf<ModelClassMention>()
+
+    val typeModels : Sequence<SchemaTypeModel>
+        get() = modelTypes.values.asSequence()
 
     init {
         // add the basic scalar mappings for defined scalar types
@@ -174,113 +178,296 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
         }
     }
 
-    fun generateQueries(toDir: Path) {
+    fun generateQueries(toDir: Path, filter: (input: SchemaTypeModel, filename: String) -> Boolean) {
         for (model in modelTypes.values.asSequence()) {
-            if (model !is InterfaceTypeModel && model !is SchemaRelationTypeModel) {
+            if (model !is InterfaceTypeModel &&
+                model !is SchemaRelationTypeModel &&
+                filter(model, "")) {
                 // for now we'll just generate each model
                 // maybe we need to enable some logic to handle abstractions and interfaces
                 // or classes for which queries aren't needed.
-                generateGetAllQuery(model, toDir)
-                generateGetByKeyQuery(model, toDir)
+                generateGetAllQuery(model, toDir, filter)
+                generateGetByKeyQuery(model, toDir, filter)
             }
         }
     }
 
-    private fun generateGetAllQuery(model: SchemaTypeModel, toDir: Path) {
-        val schemaQueryName = "${Util.decapitalize(model.schemaName)}"
-        val name = Util.pluralize(schemaQueryName)
-        val fragmentName = "${model.schemaName}Fields"
-        val fragments = mutableSetOf(fragmentName)
-        val rels = mutableMapOf<String, RecursiveRelationData>()
-        // default behavior of relationships that are included in default queries.
-        model.relationshipAttributes.forEach { r ->
-            val name = r.schemaName
-            val relatedType = getTypeOrInterfaceModel(r.schemaType)
-            if (relatedType != null) {
-                if (relatedType is SchemaRelationTypeModel) {
-                    rels[name] = buildRelationshipRels(r, relatedType, model, mutableSetOf())
+    fun generateRepositories(toDir: Path, baseClass: String?, packageName: String, isJava: Boolean,
+                             filter : (outputFileName: String) -> Boolean) {
+        log.info("Generating repositories for ${modelTypes.size} model types in ${toDir.toAbsolutePath()}")
+        for (model in modelTypes.values.asSequence()) {
+            if (model !is InterfaceTypeModel && model !is SchemaRelationTypeModel) {
+                generateRepository(model, toDir, baseClass, packageName, isJava, filter)
+            }
+        }
+    }
+
+    fun generateRepository(model: SchemaTypeModel, toDir: Path,
+                           baseClass: String?, packageName: String,
+                           isJava: Boolean = true,
+                           filter: (filename: String) -> Boolean) {
+        if (model is SchemaRelationTypeModel) {
+            throw IllegalArgumentException("Cannot generate a repository for a relation type")
+        }
+        val ext = if (isJava) ".java" else ".kt"
+        val repoClassName = "${model.classInfo.simpleName()}Repository"
+        val modelClassName = model.classInfo.simpleName()
+        val filename = "$repoClassName$ext"
+        val file = toDir.resolve(filename)
+        log.info("Generating ${file.toAbsolutePath()}")
+        val lineEnd = if (isJava) ";" else ""
+        val fqType = model.classInfo.name().toString()
+        val baseClassPackage = if (baseClass.isNullOrEmpty())
+            ""
+        else if (baseClass.lastIndexOf('.') == -1)
+            packageName
+        else
+            baseClass.substring(0, baseClass.lastIndexOf('.'))
+        val baseClassExtends = if (baseClass.isNullOrEmpty())
+            "AbstractNodeRepository<$modelClassName>"
+        else if (baseClass.lastIndexOf('.') == -1)
+            "$baseClass<$modelClassName>"
+        else
+            "${baseClass.substring(baseClass.lastIndexOf('.') + 1)}<$modelClassName>"
+
+        if (filter(filename)) {
+            PrintWriter(BufferedWriter(file.writer())).use { w ->
+                w.println("package ${packageName}$lineEnd")
+                w.println()
+                w.println("import $fqType$lineEnd")
+                if (!baseClass.isNullOrEmpty() && baseClassPackage != packageName) {
+                    w.println("import $baseClass$lineEnd")
+                }
+                w.println()
+                w.println("import com.artisanecm.graphql.provider.GraphQLProvider$lineEnd")
+                w.println("import com.artisanecm.graphql.repository.KeyGeneratorFactory$lineEnd")
+                w.println("import com.artisanecm.graphql.repository.nodeentity.NodeConverterFactory$lineEnd")
+                if (baseClass.isNullOrEmpty()) {
+                    w.println("import com.artisanecm.graphql.repository.AbsractNodeRepository$lineEnd")
+                }
+                w.println("import com.artisanecm.neo4j.util.JsonSupport$lineEnd")
+                w.println()
+                w.println("import jakarta.enterprise.context.ApplicationScoped$lineEnd")
+                w.println("import jakarta.inject.Inject$lineEnd")
+                if (isJava) {
+                    w.println("import java.util.List$lineEnd")
+                    w.println("import java.util.Map$lineEnd")
+                }
+                w.println()
+                w.println("/**")
+                w.println(" * Basic generated repository for ${modelClassName}.")
+                w.println(" * Changes made here may not be retained if the class is regenerated.")
+                w.println(" */")
+                w.println("@ApplicationScoped")
+                if (isJava) {
+                    val keyTypes =
+                        model.key.joinToString(separator = ", ") { "final ${Util.javaScalarRepresentation(it.schemaType.scalarRepresentation)} ${it.schemaName}" }
+                    val keyMap = model.key.joinToString(separator = ", ") { "\"${it.schemaName}\", ${it.schemaName}" }
+                    w.println("public class $repoClassName extends $baseClassExtends {")
+                    w.println("  JsonSupport json;")
+                    w.println()
+                    w.println("  @Inject")
+                    w.println("  public $repoClassName(final GraphQLProvider graphQLProvider, final NodeConverterFactory nodeConverterFactory, final KeyGeneratorFactory keyGeneratorFactory, final JsonSupport json) {")
+                    w.println("    super(graphQLProvider, $modelClassName.class, nodeConverterFactory, keyGeneratorFactory);")
+                    w.println("    this.json = json;")
+                    w.println("  }")
+                    w.println()
+                    w.println("  /**")
+                    w.println("   * Find all instances of ${modelClassName}.")
+                    w.println("   * @return a list of all ${modelClassName} instances.")
+                    w.println("   */")
+                    w.println("  public List<$modelClassName> getAll${Util.pluralize(modelClassName)}() {")
+                    w.println(
+                        "    return json.toObjectList(entityListQuery(\"${
+                            Util.decapitalize(
+                                Util.pluralize(
+                                    modelClassName
+                                )
+                            )
+                        }\", Map.of()), $modelClassName.class);"
+                    )
+                    w.println("  }")
+                    w.println()
+                    w.println("  /**")
+                    w.println("   * Find a single instance of ${modelClassName} by its primary key.")
+                    model.key.forEach { keyAttr ->
+                        w.println("   * @param ${keyAttr.schemaName} Primary key value")
+                    }
+                    w.println("   * @return the matching ${modelClassName} instance, or null if not found.")
+                    w.println("   */")
+                    w.println("  public $modelClassName get${modelClassName}ByKey($keyTypes) {")
+                    w.println("    final Map<String, Object> params = Map.of($keyMap);")
+                    w.println(
+                        "    final Map<String, Object> row = singleEntityQuery(\"${
+                            Util.decapitalize(
+                                modelClassName
+                            )
+                        }ByKey\", params);"
+                    )
+                    w.println("    if (row == null) {")
+                    w.println("      return null;")
+                    w.println("    }")
+                    w.println("    return json.toObject(row, $modelClassName.class);")
+                    w.println("  }")
+                    w.println("}")
                 } else {
-                    rels[name] = buildDeepRels(r, relatedType, mutableSetOf())
+                    // kotlin
+                    val keyTypes = model.key.joinToString(separator = ", ") {
+                        "${it.schemaName}: ${
+                            Util.kotlinScalarRepresentation(it.schemaType.scalarRepresentation)
+                        }"
+                    }
+                    val keyMap = model.key.joinToString(separator = ", ") { "\"${it.schemaName}\" to ${it.schemaName}" }
+                    w.println("class $repoClassName @Inject constructor(graphQLProvider: GraphQLProvider, nodeConverters: NodeConverterFactory, keyGenerators: KeyGeneratorFactory, val json: JsonSupport)")
+                    w.println("    : $baseClassExtends(graphQLProvider, $modelTypes::class.java, nodeConverters, keyGenerators) {")
+                    w.println()
+                    w.println()
+                    w.println("  /**")
+                    w.println("   * Find all instances of ${modelClassName}.")
+                    w.println("   * @return a list of all ${modelClassName} instances.")
+                    w.println("   */")
+                    w.println("  fun getAll${Util.pluralize(modelClassName)}() : List<$modelClassName> {")
+                    w.println(
+                        "    return json.toObjectList(entityListQuery(\"${
+                            Util.decapitalize(
+                                Util.pluralize(
+                                    modelClassName
+                                )
+                            )
+                        }\", mapOf()), $modelClassName::class.java)"
+                    )
+                    w.println("  }")
+                    w.println()
+                    w.println("  /**")
+                    w.println("   * Find a single instance of ${modelClassName} by its primary key.")
+                    model.key.forEach { keyAttr ->
+                        w.println("   * @param ${keyAttr.schemaName} Primary key value")
+                    }
+                    w.println("   * @return the matching ${modelClassName} instance, or null if not found.")
+                    w.println("   */")
+                    w.println("  fun get${modelClassName}ByKey($keyTypes) : $modelClassName? {")
+                    w.println("    val params = mapOf($keyMap)")
+                    w.println("    val row = singleEntityQuery(\"${Util.decapitalize(modelClassName)}ByKey\", params)")
+                    w.println("    if (row == null) {")
+                    w.println("      return null")
+                    w.println("    }")
+                    w.println("    return json.toObject(row, $modelClassName::class.java)")
+                    w.println("  }")
+                    w.println("}")
                 }
             }
-        }
-
-        // accumulate the fragments (recursively) from all the relations that will use them
-        rels.values.forEach { it.buildFragments(fragments) }
-
-        BufferedWriter(toDir.resolve("${name}.query").writer()).use { w ->
-            w.write("params: {}")
-            w.newLine()
-            w.write("fragments:")
-            w.newLine()
-            writeFragments(w, fragments)
-            w.write("query: |")
-            w.newLine()
-            w.write(" query $name {")
-            w.newLine()
-            w.write("    $schemaQueryName {")
-            w.newLine()
-            w.write("      ...$fragmentName")
-            w.newLine()
-            rels.forEach { (name, data) ->
-                writeRelation(w, name, data, 3)
-            }
-            w.write("    }")
-            w.newLine()
-            w.write("  }")
-            w.newLine()
+        } else {
+            log.info("Skipping $filename because an existing source file was found")
         }
     }
 
-    fun generateGetByKeyQuery(model: SchemaTypeModel, toDir: Path) {
-        val name = "${Util.decapitalize(model.schemaName)}ByKey"
+    private fun generateGetAllQuery(model: SchemaTypeModel, toDir: Path,
+                                    filter: (model: SchemaTypeModel, filename: String) -> Boolean) {
         val schemaQueryName = "${Util.decapitalize(model.schemaName)}"
-        val fragmentName = "${model.schemaName}Fields"
-        val fragments = mutableSetOf(fragmentName)
-        val rels = mutableMapOf<String, RecursiveRelationData>()
-        // default behavior of relationships that are included in default queries.
-        model.relationshipAttributes.forEach { r ->
-            val name = r.schemaName
-            val relatedType = getTypeOrInterfaceModel(r.schemaType)
-            if (relatedType != null) {
-                rels[name] = buildDeepRels(r, relatedType, mutableSetOf())
+        val name = Util.pluralize(schemaQueryName)
+        val targetFileName = "${name}.query"
+        if (filter(model, targetFileName)) {
+            val fragmentName = "${model.schemaName}Fields"
+            val fragments = mutableSetOf(fragmentName)
+            val rels = mutableMapOf<String, RecursiveRelationData>()
+            // default behavior of relationships that are included in default queries.
+            model.relationshipAttributes.forEach { r ->
+                val rName = r.schemaName
+                val relatedType = getTypeOrInterfaceModel(r.schemaType)
+                if (relatedType != null) {
+                    if (relatedType is SchemaRelationTypeModel) {
+                        rels[rName] = buildRelationshipRels(r, relatedType, mutableSetOf())
+                    } else {
+                        rels[rName] = buildDeepRels(r, relatedType, mutableSetOf())
+                    }
+                }
             }
-        }
 
-        // accumulate the fragments (recursively) from all the relations that will use them
-        rels.values.forEach { it.buildFragments(fragments) }
+            // accumulate the fragments (recursively) from all the relations that will use them
+            rels.values.forEach { it.buildFragments(fragments) }
 
-        BufferedWriter(toDir.resolve("${name}.query").writer()).use { w ->
-            w.write("params:")
-            w.newLine()
-            model.key.forEach { keyAttr ->
-                w.write("  ${keyAttr.schemaName}: ${keyAttr.schemaType.scalarRepresentation}")
+            BufferedWriter(toDir.resolve(targetFileName).writer()).use { w ->
+                w.write("params: {}")
+                w.newLine()
+                w.write("fragments:")
+                w.newLine()
+                writeFragments(w, fragments)
+                w.write("query: |")
+                w.newLine()
+                w.write(" query $name {")
+                w.newLine()
+                w.write("    $schemaQueryName {")
+                w.newLine()
+                w.write("      ...$fragmentName")
+                w.newLine()
+                rels.forEach { (name, data) ->
+                    writeRelation(w, name, data, 3)
+                }
+                w.write("    }")
+                w.newLine()
+                w.write("  }")
                 w.newLine()
             }
-            w.write("fragments:")
-            w.newLine()
-            writeFragments(w, fragments)
-            w.write("query: |")
-            w.newLine()
-            val params = model.key.asSequence()
-                .map { keyAttr -> "$${keyAttr.schemaName}: ${keyAttr.schemaType.scalarRepresentation}!" }
-                .joinToString(separator = ", ")
-            val paramConditions = model.key.asSequence()
-                .map { keyAttr -> "${keyAttr.schemaName}: $${keyAttr.schemaName}" }
-                .joinToString(separator = ", ")
-            w.write("  query $name($params) {")
-            w.newLine()
-            w.write("    $schemaQueryName($paramConditions) {")
-            w.newLine()
-            w.write("      ...$fragmentName")
-            w.newLine()
-            rels.forEach { (name, data) ->
-                writeRelation(w, name, data, 3)
+        } else {
+            log.info("Excluding $targetFileName because an existing source file was found")
+        }
+    }
+
+    fun generateGetByKeyQuery(model: SchemaTypeModel, toDir: Path,
+                              filter: (model: SchemaTypeModel, filename: String) -> Boolean) {
+        val name = "${Util.decapitalize(model.schemaName)}ByKey"
+        val targetFileName = "${name}.query"
+        if (filter(model, targetFileName)) {
+            val schemaQueryName = "${Util.decapitalize(model.schemaName)}"
+            val fragmentName = "${model.schemaName}Fields"
+            val fragments = mutableSetOf(fragmentName)
+            val rels = mutableMapOf<String, RecursiveRelationData>()
+            // default behavior of relationships that are included in default queries.
+            model.relationshipAttributes.forEach { r ->
+                val rName = r.schemaName
+                val relatedType = getTypeOrInterfaceModel(r.schemaType)
+                if (relatedType != null) {
+                    rels[rName] = buildDeepRels(r, relatedType, mutableSetOf())
+                }
             }
-            w.write("    }")
-            w.newLine()
-            w.write("  }")
-            w.newLine()
+
+            // accumulate the fragments (recursively) from all the relations that will use them
+            rels.values.forEach { it.buildFragments(fragments) }
+
+            BufferedWriter(toDir.resolve(targetFileName).writer()).use { w ->
+                w.write("params:")
+                w.newLine()
+                model.key.forEach { keyAttr ->
+                    w.write("  ${keyAttr.schemaName}: ${keyAttr.schemaType.scalarRepresentation}")
+                    w.newLine()
+                }
+                w.write("fragments:")
+                w.newLine()
+                writeFragments(w, fragments)
+                w.write("query: |")
+                w.newLine()
+                val params = model.key.asSequence()
+                    .map { keyAttr -> "$${keyAttr.schemaName}: ${keyAttr.schemaType.scalarRepresentation}!" }
+                    .joinToString(separator = ", ")
+                val paramConditions = model.key.asSequence()
+                    .map { keyAttr -> "${keyAttr.schemaName}: $${keyAttr.schemaName}" }
+                    .joinToString(separator = ", ")
+                w.write("  query $name($params) {")
+                w.newLine()
+                w.write("    $schemaQueryName($paramConditions) {")
+                w.newLine()
+                w.write("      ...$fragmentName")
+                w.newLine()
+                rels.forEach { (name, data) ->
+                    writeRelation(w, name, data, 3)
+                }
+                w.write("    }")
+                w.newLine()
+                w.write("  }")
+                w.newLine()
+            }
+        } else {
+            log.info("Excluding $targetFileName because an existing source file was found")
         }
     }
 
@@ -316,8 +503,6 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
         val isDeep = notPreviouslySeen &&
                 (relation.cascades.contains("DELETE") || relation.cascades.contains("ALL"))
         val thisType = RecursiveRelationData(isDeep, relation.schemaName, relation, relatedType)
-        println("building rels for relation ${relation.schemaName} [${relatedType.schemaName}")
-        println("seen $seen [new $notPreviouslySeen deep $isDeep]")
         val newSeen = seen.toMutableSet()
         newSeen.add(relatedType.schemaName)
         if (isDeep) {
@@ -325,7 +510,7 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
                 val rType = getTypeOrInterfaceModel(r.schemaType)
                 if (rType != null) {
                     if (rType is SchemaRelationTypeModel) {
-                        thisType.add(buildRelationshipRels(r, rType, relatedType, newSeen))
+                        thisType.add(buildRelationshipRels(r, rType, newSeen))
                     } else {
                         thisType.add(buildDeepRels(r, rType, newSeen))
                     }
@@ -337,7 +522,6 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
 
     private fun buildRelationshipRels(relationFromSource: RelationshipAttributeModel,
                                       relatedType: SchemaRelationTypeModel,
-                                      fromType: SchemaTypeModel,
                                       seen: Set<String>) : RecursiveRelationData {
         val fromModel = relatedType.fromModel ?: throw IllegalArgumentException("Incomplete relation model - no from Model type inferred")
         val toModel = relatedType.toModel ?: throw kotlin.IllegalArgumentException("Incomplete relation model - no to Model type inferred")
@@ -347,7 +531,6 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
         // then we'll need to follow either the @StartNode or @EndNode, depending on the directionality
         // of the relationFromSource
         val thisType = RecursiveRelationData(true, relationFromSource.schemaName, relationFromSource, relatedType)
-        println("building relation entity rels for relation ${relationFromSource.schemaName} [${relatedType.schemaName}")
         if (relationFromSource.direction == RelationDirection.OUT) {
             // we only want to include the toModel to avoid self-reference
             // there is no RelationshipAttributeModel for EndNode, but we'll need a synthetic one
