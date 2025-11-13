@@ -15,10 +15,18 @@ import org.jboss.jandex.CompositeIndex
 import org.jboss.jandex.Index
 import org.jboss.jandex.IndexReader
 import org.jboss.jandex.IndexView
+import org.twdata.maven.mojoexecutor.MojoExecutor.artifactId
+import org.twdata.maven.mojoexecutor.MojoExecutor.configuration
+import org.twdata.maven.mojoexecutor.MojoExecutor.element
+import org.twdata.maven.mojoexecutor.MojoExecutor.executeMojo
+import org.twdata.maven.mojoexecutor.MojoExecutor.executionEnvironment
+import org.twdata.maven.mojoexecutor.MojoExecutor.goal
+import org.twdata.maven.mojoexecutor.MojoExecutor.groupId
+import org.twdata.maven.mojoexecutor.MojoExecutor.plugin
+import org.twdata.maven.mojoexecutor.MojoExecutor.version
 import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Files
-import java.nio.file.Path
 import java.util.Enumeration
 import java.util.jar.JarEntry
 import java.util.jar.JarFile
@@ -26,9 +34,9 @@ import kotlin.io.path.Path
 
 abstract class AbstractModelMojo : AbstractMojo() {
     /** Injected as the maven project object. */
-    @Component
+    @Parameter(defaultValue = "\${project}", readonly = true, required = true)
     var project : MavenProject? = null
-    @Component
+    @Parameter(defaultValue = "\${session}", readonly = true, required = true)
     var session : MavenSession? = null
     @Component
     var pluginManager : BuildPluginManager? = null
@@ -46,8 +54,12 @@ abstract class AbstractModelMojo : AbstractMojo() {
     val indexFile : String? = null
     @Parameter(property = "scanDependencies", required = false)
     val scanDependencies: ScanDependencies? = null
-    @Parameter(property = "outputDirectory", defaultValue = "\${project.build.directory}/generated-resources/graphql-schema")
-    val outputDirectory : String? = null
+    @Parameter(property = "outputSchemaLocation", defaultValue = "\${project.build.directory}/generated-resources/graphql-schema")
+    val outputSchemaLocation : String? = null
+    @Parameter(property = "outputQueryLocation", defaultValue = "\${project.build.directory}/generated-resources/graphql-queries")
+    val outputQueryLocation : String? = null
+    @Parameter(property = "generatedSourceDirectory", defaultValue = "\${project.build.directory}/generated-sources/graphql-repos")
+    val sourceOutputLocation : String? = null
     @Parameter(property = "schemaFile", defaultValue = "schema.graphql")
     val schemaFile = "schema.graphql"
     @Parameter(property = "generateFragments", defaultValue = "true")
@@ -62,6 +74,14 @@ abstract class AbstractModelMojo : AbstractMojo() {
     val resourcePackage = ""
     @Parameter(property = "queryDirectory", defaultValue = "")
     val queryDirectory = ""
+    @Parameter(property = "repositoryDirectory", defaultValue = "")
+    val repositoryDirectory = ""
+    @Parameter(property = "repositoryBaseClass", defaultValue = "")
+    val repositoryBaseClass = ""
+    @Parameter(property = "repositoryPackage", defaultValue = "")
+    val repositoryPackage = ""
+    @Parameter(property = "generateKotlin", defaultValue = "false")
+    val generateKotlin = false
 
     protected fun resolveDependencies(scanDependencies: ScanDependencies?) : List<Artifact> {
         val thisProject = project!!
@@ -81,8 +101,6 @@ abstract class AbstractModelMojo : AbstractMojo() {
     protected fun resolveJandex(scanArtifact: Artifact) : Index? {
         var extractedIndex : Index? = null
         if (scanArtifact.getFile() != null && scanArtifact.getFile().getName().endsWith(".jar")) {
-            val extractedFiles: MutableList<Path?> = ArrayList<Path?>()
-
             log.debug(java.lang.String.format("Scanning JAR: %s", scanArtifact.getFile().getName()))
 
             JarFile(scanArtifact.getFile()).use { jarFile ->
@@ -96,7 +114,7 @@ abstract class AbstractModelMojo : AbstractMojo() {
                     val entryName: String = entry.getName()
                     // Check if this entry matches our resource patterns
                     if (entryName == "META-INF/jandex.idx") {
-                        extractedIndex = extractIndex(jarFile, entry, scanArtifact)
+                        extractedIndex = extractIndex(jarFile, entry)
                         if (extractedIndex != null) {
                             log.debug(
                                 java.lang.String.format(
@@ -113,17 +131,12 @@ abstract class AbstractModelMojo : AbstractMojo() {
         return extractedIndex
     }
 
-    protected fun extractIndex(jarFile: JarFile, jarEntry: JarEntry, fromArtifact: Artifact) : Index? {
-        val group = fromArtifact.groupId.replace(".", "_")
-        val fileName = "${group}_${fromArtifact.artifactId}_${fromArtifact.version}_jandex.idx"
-
-        val outDir = Path(project!!.build.outputDirectory)
-        val tempDir = outDir.resolve("scannedIndexes")
-        Files.createDirectories(tempDir)
-        val outputFile = tempDir.resolve(fileName);
-
-        return Files.newInputStream(outputFile).use {
-            IndexReader(it).read()
+    protected fun extractIndex(jarFile: JarFile, jarEntry: JarEntry) : Index? {
+        jarFile.use {
+            it.getInputStream(jarEntry).use { inStream ->
+                // read the index file from the JAR to memory
+                return IndexReader(inStream).read()
+            }
         }
     }
 
@@ -165,5 +178,27 @@ abstract class AbstractModelMojo : AbstractMojo() {
         val model = SchemaModel(log, includeNeo4jScalars)
         scalarMappings.forEach { model.addScalarMapping(it) }
         return SchemaGeneration(log, indexView, model, setupProjectClassloader(workingProject))
+    }
+
+    protected fun copyResources(fromPath: String, overwrite: Boolean = false) {
+        log.info("Copy generated resources to ${project!!.build.outputDirectory}")
+        executeMojo(
+            plugin(
+                groupId("org.apache.maven.plugins"),
+                artifactId("maven-resources-plugin"),
+                version("3.3.1")
+            ),
+            goal("copy-resources"),
+            configuration(
+                element("outputDirectory", project!!.build.outputDirectory),
+                element("resources",
+                    element("resource",
+                        element("directory", fromPath)
+                    )
+                ),
+                element("overwrite", overwrite.toString())
+            ),
+            executionEnvironment(project, session, pluginManager)
+        )
     }
 }

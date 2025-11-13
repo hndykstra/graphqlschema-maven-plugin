@@ -1,7 +1,6 @@
 package com.opsysinc.graphql.plugin.model
 
 import com.artisanecm.graphql.repository.nodeentity.NodeEntity
-import org.jboss.jandex.AnnotationInstance
 import org.jboss.jandex.ClassInfo
 
 open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String? = null) {
@@ -10,7 +9,8 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
     }
 
     val schemaName : String
-    val nodeEntity: AnnotationInstance?
+    // node entity is not required to create a model if it is a non-entity base class
+    val nodeEntity = classInfo.annotation(NodeEntity::class.java)
     val simpleAttributes =  mutableListOf<SimpleAttributeModel>()
     val relationshipAttributes = mutableListOf<RelationshipAttributeModel>()
     val interfaces = mutableListOf<SchemaTypeModel>()
@@ -18,8 +18,6 @@ open class SchemaTypeModel (val classInfo: ClassInfo, val overrideName : String?
     val key = mutableListOf<SimpleAttributeModel>()
 
     init {
-        // node entity is not required to create a model if it is a non-entity base class
-        nodeEntity = classInfo.annotation(NodeEntity::class.java)
 
         val label = nodeEntity?.value("label")?.asStringArray()
         schemaName = overrideName ?:

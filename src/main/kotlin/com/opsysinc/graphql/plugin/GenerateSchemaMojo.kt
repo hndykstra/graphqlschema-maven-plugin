@@ -5,7 +5,6 @@ import org.apache.maven.plugin.MojoFailureException
 import org.apache.maven.plugins.annotations.LifecyclePhase
 import org.apache.maven.plugins.annotations.Mojo
 import org.apache.maven.plugins.annotations.ResolutionScope
-import org.twdata.maven.mojoexecutor.MojoExecutor.*
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -43,7 +42,7 @@ class GenerateSchemaMojo : AbstractModelMojo() {
             }
 
             // export the model
-            val generateResourceLocation = outputDirectory ?: "${thisProject.build.directory}/generated-resources/graphql-schema"
+            val generateResourceLocation = outputSchemaLocation ?: "${thisProject.build.directory}/generated-resources/graphql-schema"
             val generateResourceDir = Path(generateResourceLocation)
             val packageDir = generateResourceDir.resolve(resourcePackage.replace(".", File.separator))
             Files.createDirectories(packageDir)
@@ -51,13 +50,11 @@ class GenerateSchemaMojo : AbstractModelMojo() {
             log.info("Writing schema to $outFile")
             model.generateSchema(outFile)
 
-            val fragments = if (generateFragments) {
+            if (generateFragments) {
                 log.info("Generating fragments")
                 val fragmentPath = packageDir.resolve(fragmentDirectory)
                 Files.createDirectories(fragmentPath)
                 model.generateFragments(fragmentPath)
-            } else {
-                emptyList()
             }
 
             if (pluginErrors.isEmpty()) {
@@ -85,25 +82,5 @@ class GenerateSchemaMojo : AbstractModelMojo() {
         val copyTarget = classesDir.resolve(relative)
         Files.createDirectories(copyTarget.parent)
         Files.copy(copyFile, copyTarget, StandardCopyOption.COPY_ATTRIBUTES, StandardCopyOption.REPLACE_EXISTING)
-    }
-
-    private fun copyResources(fromPath: String) {
-        log.info("Copy generated resources to ${project!!.build.outputDirectory}")
-        executeMojo(
-            plugin(
-                groupId("org.apache.maven.plugins"),
-                artifactId("maven-resources-plugin"),
-                version("3.3.1")
-            ),
-            goal("copy-resources"),
-            configuration(
-                element("outputDirectory", project!!.build.outputDirectory),
-                element("resources",
-                    element("resource",
-                        element("directory", fromPath))
-                )
-            ),
-            executionEnvironment(project, session, pluginManager)
-        )
     }
 }

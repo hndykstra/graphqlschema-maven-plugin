@@ -13,6 +13,7 @@ import org.jboss.jandex.Type
  * @property direction Direction of the Neo4j relationship, OUT or IN.
  * @property required Whether the attribute is required or not in the schema, e.g. schemaName: SchemaType!
  * @property collection Whether the attribute is a collection type in the schema, e.g. schemaName: [SchemaType]
+ * @property cascades List of operations that cascade across this relationship, may have NONE or ALL
  */
 class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
                                   val relationshipName: String, val direction: RelationDirection,
@@ -27,6 +28,10 @@ class RelationshipAttributeModel (val schemaName: String, val schemaType: Type,
             ?: throw AttributeModelException(schemaName, owningType.schemaName,
                 "Could not resolve type ${schemaType.name()}")
         schemaTypeName = schemaTypeModel.schemaName
+    }
+
+    fun doesCascade(operationName: String): Boolean {
+        return cascades.contains(operationName.uppercase()) || cascades.contains("ALL")
     }
 
     fun generateAttribute() : String {
