@@ -17,6 +17,7 @@ import org.twdata.maven.mojoexecutor.MojoExecutor.version
 import java.io.File
 import java.nio.file.Files
 import kotlin.io.path.Path
+import kotlin.io.path.absolutePathString
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
@@ -69,13 +70,16 @@ class GenerateRepositoriesMojo : AbstractModelMojo() {
 
             val newFiles = model.generateRepositories(
                 repoPkgPath, repositoryBaseClass, repositoryPackage, !generateKotlin) {
-                !repoSourceExists(it, repoPkgPathStr)
-            }
+                    !repoSourceExists(it, repoPkgPathStr)
+                }
 
-            val removeFiles = repoPath.listDirectoryEntries().filter {
+            val removeFiles = Files.list(repoPkgPath).filter {
                 it.isRegularFile() && !newFiles.contains(it)
             }
-            removeFiles.forEach { it.toFile().delete() }
+            removeFiles.forEach {
+                log.info("Removing stale repository: ${it.absolutePathString()}")
+                it.toFile().delete()
+            }
 
             compileGeneratedSources(repoPath.toAbsolutePath().toString())
         } catch (mojoErr: MojoFailureException) {
@@ -96,7 +100,7 @@ class GenerateRepositoriesMojo : AbstractModelMojo() {
 
     fun compileGeneratedSources(genSourceDir: String) {
         val pluginVersion = project!!.properties["compiler-plugin.version"] as String
-        log.info("Copy generated resources to ${project!!.build.outputDirectory}")
+        log.info("Copy generated .class files to ${project!!.build.outputDirectory}")
         executeMojo(
             plugin(
                 groupId("org.apache.maven.plugins"),
