@@ -19,6 +19,8 @@ import java.nio.file.Files
 import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
 
 @Mojo(name = "generate-repos",
     defaultPhase = LifecyclePhase.GENERATE_TEST_SOURCES,
@@ -65,10 +67,15 @@ class GenerateRepositoriesMojo : AbstractModelMojo() {
             val repoPkgPath = repoPath.resolve(repoPkgPathStr)
             Files.createDirectories(repoPkgPath)
 
-            model.generateRepositories(
+            val newFiles = model.generateRepositories(
                 repoPkgPath, repositoryBaseClass, repositoryPackage, !generateKotlin) {
                 !repoSourceExists(it, repoPkgPathStr)
             }
+
+            val removeFiles = repoPath.listDirectoryEntries().filter {
+                it.isRegularFile() && !newFiles.contains(it)
+            }
+            removeFiles.forEach { it.toFile().delete() }
 
             compileGeneratedSources(repoPath.toAbsolutePath().toString())
         } catch (mojoErr: MojoFailureException) {
