@@ -193,19 +193,24 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
     }
 
     fun generateRepositories(toDir: Path, baseClass: String?, packageName: String, isJava: Boolean,
-                             filter : (outputFileName: String) -> Boolean) {
+                             filter : (outputFileName: String) -> Boolean) : List<Path> {
         log.info("Generating repositories for ${modelTypes.size} model types in ${toDir.toAbsolutePath()}")
+        val generatedFiles = mutableListOf<Path>()
         for (model in modelTypes.values.asSequence()) {
             if (model !is InterfaceTypeModel && model !is SchemaRelationTypeModel) {
-                generateRepository(model, toDir, baseClass, packageName, isJava, filter)
+                val path = generateRepository(model, toDir, baseClass, packageName, isJava, filter)
+                if (path != null) {
+                    generatedFiles.add(path)
+                }
             }
         }
+        return generatedFiles
     }
 
     fun generateRepository(model: SchemaTypeModel, toDir: Path,
                            baseClass: String?, packageName: String,
                            isJava: Boolean = true,
-                           filter: (filename: String) -> Boolean) {
+                           filter: (filename: String) -> Boolean) : Path? {
         if (model is SchemaRelationTypeModel) {
             throw IllegalArgumentException("Cannot generate a repository for a relation type")
         }
@@ -356,8 +361,10 @@ class SchemaModel (val log: Log, includeNeo4jScalars: Boolean = false) {
                     w.println("}")
                 }
             }
+            return file
         } else {
             log.info("Skipping $filename because an existing source file was found")
+            return null
         }
     }
 
